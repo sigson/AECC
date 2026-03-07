@@ -16,7 +16,7 @@ namespace AECC.ECS.Events.ECSEvents
         {
             foreach (var entity in Entities)
             {
-                EntitySerializer.UpdateDeserialize(entity);
+                ECSWorld.GetWorld(this.WorldOwnerId).EntityWorldSerializer.UpdateDeserialize(entity);
             }
         }
     }

@@ -20,6 +20,7 @@ namespace NECS.ECS.ECSCore
     {
         static new public long Id { get; set; } = 4;
         public long EntityOwnerId;
+        public long WorldOwnerId;
         [Newtonsoft.Json.JsonIgnore]
         public long SocketSourceId {
             get{

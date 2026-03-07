@@ -33,6 +33,8 @@ namespace AECC.Core
         //key - component id type
         public IDictionary<long, HashSet<ECSEntity>> ComponentOwners = new Dictionary<long, HashSet<ECSEntity>>();
 
+        public List<ECSExecutableContractContainer> AllSystems = new List<ECSExecutableContractContainer>();
+
         private ECSWorld world;
         private Func<Type, bool> staticContractFiltering;
         public ECSContractsManager(ECSWorld world, Func<Type, bool> staticContractFiltering)
@@ -49,7 +51,7 @@ namespace AECC.Core
 
         public void InitializeSystems()
         {
-            var AllSystems = ECSAssemblyExtensions.GetAllSubclassOf(typeof(ECSExecutableContractContainer)).Where(x => this.staticContractFiltering(x)).Select(x => (ECSExecutableContractContainer)Activator.CreateInstance(x)).Where(x => x.WorldFilter(this.world)).ToList();
+            AllSystems = ECSAssemblyExtensions.GetAllSubclassOf(typeof(ECSExecutableContractContainer)).Where(x => this.staticContractFiltering(x)).Select(x => (ECSExecutableContractContainer)Activator.CreateInstance(x)).Where(x => x.WorldFilter(this.world)).ToList();
             AllSystems = AllSystems.Except(ReturnExceptedSystems()).ToList<ECSExecutableContractContainer>();
             foreach(ECSExecutableContractContainer system in AllSystems)
             {

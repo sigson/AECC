@@ -246,6 +246,23 @@ public static class EnumerableExtension
         }
     }
 
+    public static IEnumerable<TResult> CastSafe<TResult>(this IEnumerable<object> source)
+    {
+        // Проверка на null, чтобы метод вел себя как стандартные LINQ-методы
+        if (source == null) 
+            throw new ArgumentNullException(nameof(source));
+
+        foreach (var item in source)
+        {
+            // Безопасное приведение: если item можно привести к TResult, 
+            // он помещается в переменную result и возвращается
+            if (item is TResult result)
+            {
+                yield return result;
+            }
+        }
+    }
+
     public static void ForEachWithIndex<TKey>(this IEnumerable<TKey> list, Action<TKey, int> compute)
     {
         if (list == null)
