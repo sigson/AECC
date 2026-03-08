@@ -189,14 +189,17 @@ namespace AECC.Harness.Services
                             jsonText = input.ReadToEnd();
                         }
 
-                        System.IO.MemoryStream mStream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(jsonText));
-                        var reader = new JsonTextReader(new StreamReader(mStream));
-                        var jObject = JObject.Load(reader);
-                        switch (FSExtensions.GetFileNameWithoutExtension(file))
+                        if(jsonText != "")
                         {
-                            default:
-                                nowObject.Deserialized = jObject;
-                                break;
+                            System.IO.MemoryStream mStream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(jsonText));
+                            var reader = new JsonTextReader(new StreamReader(mStream));
+                            var jObject = JObject.Load(reader);
+                            switch (FSExtensions.GetFileNameWithoutExtension(file))
+                            {
+                                default:
+                                    nowObject.Deserialized = jObject;
+                                    break;
+                            }
                         }
 
                         var libname = nowLib.Replace(DirectoryAdapter.GetParent(nowLib), "").Replace(GlobalProgramState.instance.PathSystemSeparator, "");
@@ -530,6 +533,9 @@ namespace AECC.Harness.Services
         public string Path;
         public string RealPath;
         public string JSONRepresentation => Deserialized.ToString(Formatting.None);
+        #if GODOT
+        public Godot.Resource GodotResourceRepresentation => Godot.ResourceLoader.Load(Path);
+        #endif
         public string SerializedData;//for json
         public Lib LibTree;
         public JObject Deserialized = null;

@@ -154,5 +154,33 @@ namespace AECC.Core.BuiltInTypes.Types.AtomicType
 
             return shuffledArray.Take(count).ToArray();
         }
+
+        /// <summary>
+        /// Генерирует детерминированное значение double в диапазоне [0, 1).
+        /// </summary>
+        public double DeterministicDouble(int seedInject = 0)
+        {
+            var rand = new Random(GetSeed() + seedInject);
+            return rand.NextDouble();
+        }
+
+        /// <summary>
+        /// Генерирует детерминированное значение double в указанном диапазоне [min, max).
+        /// </summary>
+        public double DeterministicRange(double min, double max, int seedInject = 0)
+        {
+            var rand = new Random(GetSeed() + seedInject);
+            return min + (max - min) * rand.NextDouble();
+        }
+
+        /// <summary>
+        /// Генерирует пару детерминированных значений double в диапазоне [0, 1).
+        /// Полезно для генерации 2D координат.
+        /// </summary>
+        public (double x, double y) DeterministicPoint2D(int seedInject = 0)
+        {
+            var rand = new Random(GetSeed() + seedInject);
+            return (rand.NextDouble(), rand.NextDouble());
+        }
     }
 }

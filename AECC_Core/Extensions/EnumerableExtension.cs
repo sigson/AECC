@@ -320,6 +320,164 @@ public static class EnumerableExtension
         Array.Copy(data, index, result, 0, length);
         return result;
     }
+    /// <summary>
+    /// Выбирает элементы с коэффициентами, наиболее близкими к 0.0
+    /// </summary>
+    public static IEnumerable<T> TakeLowestByCoefficient<T>(
+        this IEnumerable<T> source,
+        Func<T, double> coefficientSelector,
+        int count)
+    {
+        if (source == null) throw new ArgumentNullException(nameof(source));
+        if (coefficientSelector == null) throw new ArgumentNullException(nameof(coefficientSelector));
+
+        return source
+            .OrderBy(coefficientSelector)
+            .Take(count);
+    }
+
+    /// <summary>
+    /// Выбирает элементы с коэффициентами, наиболее близкими к 1.0
+    /// </summary>
+    public static IEnumerable<T> TakeHighestByCoefficient<T>(
+        this IEnumerable<T> source,
+        Func<T, double> coefficientSelector,
+        int count)
+    {
+        if (source == null) throw new ArgumentNullException(nameof(source));
+        if (coefficientSelector == null) throw new ArgumentNullException(nameof(coefficientSelector));
+
+        return source
+            .OrderByDescending(coefficientSelector)
+            .Take(count);
+    }
+
+    /// <summary>
+    /// Выбирает элементы с обоих концов: близкие к 0 и близкие к 1.0
+    /// </summary>
+    public static (IEnumerable<T> Lowest, IEnumerable<T> Highest) TakeExtremesByCoefficient<T>(
+        this IEnumerable<T> source,
+        Func<T, double> coefficientSelector,
+        int countEach)
+    {
+        if (source == null) throw new ArgumentNullException(nameof(source));
+        if (coefficientSelector == null) throw new ArgumentNullException(nameof(coefficientSelector));
+
+        var ordered = source
+            .Select(item => (Item: item, Coefficient: coefficientSelector(item)))
+            .OrderBy(x => x.Coefficient)
+            .ToList();
+
+        var lowest = ordered.Take(countEach).Select(x => x.Item);
+        var highest = ordered.TakeLast(countEach).Select(x => x.Item);
+
+        return (lowest, highest);
+    }
+
+    public static IEnumerable<T> TakeLast<T>(this IEnumerable<T> source, int count)
+    {
+        if (source == null)
+            throw new ArgumentNullException(nameof(source));
+
+        if (count <= 0)
+            yield break;
+
+        var queue = new Queue<T>(count + 1);
+
+        foreach (var item in source)
+        {
+            queue.Enqueue(item);
+            if (queue.Count > count)
+                queue.Dequeue();
+        }
+
+        foreach (var item in queue)
+            yield return item;
+    }
+
+    // /// <summary>
+    // /// Оптимизированная версия для больших коллекций с использованием приоритетной очереди
+    // /// </summary>
+    // public static IEnumerable<T> TakeLowestByCoefficientOptimized<T>(
+    //     this IEnumerable<T> source,
+    //     Func<T, double> coefficientSelector,
+    //     int count)
+    // {
+    //     if (source == null) throw new ArgumentNullException(nameof(source));
+    //     if (keySelector == null) throw new ArgumentNullException(nameof(keySelector));
+    //     if (valueSelector == null) throw new ArgumentNullException(nameof(valueSelector));
+
+    //     if (count == 0)
+    //         return [];
+
+    //     // Max-heap для хранения N минимальных элементов
+    //     var heap = new PriorityQueue<T, double>();
+
+    //     foreach (var item in source)
+    //     {
+    //         var coefficient = coefficientSelector(item);
+
+    //         if (heap.Count < count)
+    //         {
+    //             heap.Enqueue(item, -coefficient); // отрицательный приоритет для max-heap
+    //         }
+    //         else if (heap.TryPeek(out _, out var maxPriority) && coefficient < -maxPriority)
+    //         {
+    //             heap.DequeueEnqueue(item, -coefficient);
+    //         }
+    //     }
+
+    //     // Извлекаем и сортируем результат
+    //     var result = new List<T>(heap.Count);
+    //     while (heap.Count > 0)
+    //     {
+    //         result.Add(heap.Dequeue());
+    //     }
+    //     result.Reverse();
+    //     return result;
+    // }
+
+    // /// <summary>
+    // /// Оптимизированная версия для выбора максимальных элементов
+    // /// </summary>
+    // public static IEnumerable<T> TakeHighestByCoefficientOptimized<T>(
+    //     this IEnumerable<T> source,
+    //     Func<T, double> coefficientSelector,
+    //     int count)
+    // {
+    //     if (source == null) throw new ArgumentNullException(nameof(source));
+    //     if (keySelector == null) throw new ArgumentNullException(nameof(keySelector));
+    //     if (valueSelector == null) throw new ArgumentNullException(nameof(valueSelector));
+
+    //     if (count == 0)
+    //         return [];
+
+    //     // Min-heap для хранения N максимальных элементов
+    //     var heap = new PriorityQueue<T, double>();
+
+    //     foreach (var item in source)
+    //     {
+    //         var coefficient = coefficientSelector(item);
+
+    //         if (heap.Count < count)
+    //         {
+    //             heap.Enqueue(item, coefficient);
+    //         }
+    //         else if (heap.TryPeek(out _, out var minPriority) && coefficient > minPriority)
+    //         {
+    //             heap.DequeueEnqueue(item, coefficient);
+    //         }
+    //     }
+
+    //     // Извлекаем и сортируем результат (от большего к меньшему)
+    //     var result = new List<T>(heap.Count);
+    //     while (heap.Count > 0)
+    //     {
+    //         result.Add(heap.Dequeue());
+    //     }
+    //     result.Reverse();
+    //     return result;
+    // }
 }
 
 public class ArrayTraverse

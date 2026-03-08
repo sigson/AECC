@@ -18,6 +18,33 @@ using System.Threading.Tasks;
 
 public static class GodotExtensions
 {
+    public static Dictionary<TNewKey, TNewValue> Cast<TKey, TValue, TNewKey, TNewValue>(
+        this IDictionary<TKey, TValue> source,
+        Func<TKey, TNewKey> keySelector,
+        Func<TValue, TNewValue> valueSelector)
+    {
+        if (source == null) throw new ArgumentNullException(nameof(source));
+        if (keySelector == null) throw new ArgumentNullException(nameof(keySelector));
+        if (valueSelector == null) throw new ArgumentNullException(nameof(valueSelector));
+
+        return source.ToDictionary(
+            kvp => keySelector(kvp.Key),
+            kvp => valueSelector(kvp.Value));
+    }
+
+    public static Dictionary<TNewKey, TNewValue> GCast<TKey, TValue, TNewKey, TNewValue>(
+        this Godot.Collections.Dictionary<TKey, TValue> source,
+        Func<TKey, TNewKey> keySelector,
+        Func<TValue, TNewValue> valueSelector)
+    {
+        if (source == null) throw new ArgumentNullException(nameof(source));
+        if (keySelector == null) throw new ArgumentNullException(nameof(keySelector));
+        if (valueSelector == null) throw new ArgumentNullException(nameof(valueSelector));
+
+        return source.ToDictionary(
+            kvp => keySelector(kvp.Key),
+            kvp => valueSelector(kvp.Value));
+    }
     public static string FixPath(this string path)
     {
         #if GODOT

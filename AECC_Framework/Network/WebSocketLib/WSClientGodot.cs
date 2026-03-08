@@ -128,7 +128,19 @@ namespace AECC.Network.WebSocket
         
         public void InitializeClient(string host, int port, int bufferSize = 1024)
         {
-            WebsocketUrl = $"ws://{host}:{port}";
+            if(!host.Contains("s://"))
+				WebsocketUrl = $"ws://{host}:{port}";
+			else
+			{
+				if(port.ToString() == "-1")
+				{
+					WebsocketUrl = $"{host}";
+				}
+				else
+				{
+					WebsocketUrl = $"{host}:{port}";
+				}
+			}
             ParseUrl(WebsocketUrl);
 
             if (_client != null)
