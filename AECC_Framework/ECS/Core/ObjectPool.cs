@@ -11,7 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 
-namespace NECS.ECS.ECSCore
+namespace AECC.ECS.Core
 {
     public class ObjectPool<T>
     {

@@ -10,7 +10,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 
-namespace NECS.ECS.ECSCore
+namespace AECC.ECS.Core
 {
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface)]
     public sealed class NetworkScore : Attribute

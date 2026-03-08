@@ -14,7 +14,7 @@ using AECC.Core.Serialization;
 using static AECC.Core.Serialization.EntitySerializer;
 using AECC.Extensions;
 using AECC.Core;
-using NECS.ECS.ECSCore;
+using AECC.ECS.Core;
 
 namespace AECC.Harness.Serialization
 {

@@ -1,5 +1,5 @@
 ﻿using AECC.Core;
-using NECS.ECS.ECSCore;
+using AECC.ECS.Core;
 using System;
 using System.Collections.Generic;
 using System.Linq;

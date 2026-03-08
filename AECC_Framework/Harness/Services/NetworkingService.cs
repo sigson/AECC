@@ -16,7 +16,7 @@ using AECC.Extensions.ThreadingSync;
 using AECC.Extensions;
 using WebSocketRealization;
 using AECC.Collections;
-using NECS.ECS.ECSCore;
+using AECC.ECS.Core;
 
 namespace AECC.Harness.Services
 {

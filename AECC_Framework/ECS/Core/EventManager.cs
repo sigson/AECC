@@ -14,7 +14,7 @@ using AECC.Core;
 using AECC.Extensions;
 using AECC.ECS.Core;
 
-namespace NECS.ECS.ECSCore
+namespace AECC.ECS.Core
 {
     public class ECSEventManager
     {

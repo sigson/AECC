@@ -11,7 +11,7 @@ using AECC.Core.Logging;
 using static AECC.Harness.Serialization.SerializationAdapter;
 
 
-namespace NECS.ECS.ECSCore
+namespace AECC.ECS.Core
 {
     [NetworkScore(0)]
     [System.Serializable]

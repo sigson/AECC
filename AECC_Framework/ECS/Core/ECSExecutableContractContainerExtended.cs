@@ -1,6 +1,6 @@
 using AECC.Collections;
 using AECC.Core;
-using NECS.ECS.ECSCore;
+using AECC.ECS.Core;
 
 namespace AECC.ECS.Core
 {

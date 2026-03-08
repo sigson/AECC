@@ -1,6 +1,6 @@
 ﻿using AECC.Core;
 using AECC.Core.Serialization;
-using NECS.ECS.ECSCore;
+using AECC.ECS.Core;
 using System.Collections.Generic;
 
 namespace AECC.ECS.Events.ECSEvents

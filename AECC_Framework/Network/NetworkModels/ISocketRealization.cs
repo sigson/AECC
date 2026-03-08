@@ -1,6 +1,6 @@
 using System;
 using System.Net.Sockets;
-using NECS.ECS.ECSCore;
+using AECC.ECS.Core;
 
 namespace AECC.Network.NetworkModels
 {
