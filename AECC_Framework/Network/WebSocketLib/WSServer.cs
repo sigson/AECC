@@ -11,6 +11,7 @@ using AECC.Network.NetworkModels;
 using AECC.Harness.Services;
 using AECC.Extensions;
 using AECC.Core.Logging;
+using AECC.Collections;
 
 namespace WebSocketRealization
 {

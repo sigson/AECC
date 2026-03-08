@@ -18,6 +18,7 @@ using System.Linq;
 using System.IO;
 using AECC.Collections;
 using AECC.Core;
+using AECC.ECS.Core;
 
 namespace AECC.Harness.Services
 {
@@ -151,7 +152,7 @@ namespace AECC.Harness.Services
         
         public override void InitializeProcess()
         {
-            EntitySerialization.InitSerialize();
+            ///////////////////EntitySerialization.InitSerialize();
             eventManager = new ECSEventManager();
             eventManager.IdStaticCache();
             eventManager.InitializeEventManager();

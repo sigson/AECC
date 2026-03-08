@@ -8,10 +8,11 @@ using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
 using AECC.Network.NetworkModels;
-using AECC.ECS.ECSCore;
 using AECC;
 using AECC.Harness.Services;
 using AECC.Extensions.ThreadingSync;
+using AECC.ECS.Core;
+using AECC.Extensions;
 
 namespace WebSocketRealization
 {

@@ -7,10 +7,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using AECC.Core.Logging;
-using AECC.ECS.ECSCore;
 using AECC.Harness.Services;
 using AECC.Network.NetworkModels;
 using Newtonsoft.Json;
+using AECC.ECS.Core;
 
 namespace AECC.Network.WebSocket
 {

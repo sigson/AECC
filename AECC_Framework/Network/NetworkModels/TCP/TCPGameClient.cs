@@ -10,8 +10,9 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Extensions.ThreadingSync;
-using AECC.ECS.ECSCore;
 using AECC.Extensions;
+using AECC.Collections;
+using AECC.ECS.Core;
 
 namespace AECC.Network.NetworkModels.TCP
 {

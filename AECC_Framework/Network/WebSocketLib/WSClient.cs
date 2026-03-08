@@ -5,7 +5,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using AECC.ECS.ECSCore;
+using AECC.ECS.Core;
 using AECC.Network.NetworkModels;
 
 namespace WebSocketRealization

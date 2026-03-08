@@ -1,5 +1,6 @@
 ﻿using AECC.Core.Logging;
-using AECC.ECS.ECSCore;
+using AECC.ECS.Core;
+using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
 using AECC.GameEngineAPI;
 using AECC.Harness.Services;

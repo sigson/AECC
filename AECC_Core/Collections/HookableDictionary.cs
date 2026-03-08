@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace AECC.Collections
 {
     // Тип хука: до выполнения метода или после

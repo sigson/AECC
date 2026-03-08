@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using System.Threading;
 using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
-using AECC.ECS.ECSCore;
+using AECC.ECS.Core;
 
 namespace AECC.Network.NetworkModels.TCP
 {

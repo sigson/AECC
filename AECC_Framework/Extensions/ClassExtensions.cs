@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using AECC.Extensions.ThreadingSync;
 using AECC.GameEngineAPI;
 using AECC.Harness.Model;
