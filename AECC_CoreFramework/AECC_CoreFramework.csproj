@@ -8,7 +8,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
-    <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
 	<PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>

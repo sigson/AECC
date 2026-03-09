@@ -19,7 +19,7 @@ namespace AECC.Collections
         private Dictionary<TKey, TValue> SimpleDictionary = null;
         private ConcurrentDictionary<TKey, TValue> ConcurrentDictionary = null;
 
-        private IDictionary<TKey, TValue> dictionary
+        public IDictionary<TKey, TValue> dictionary
         {
             get
             {

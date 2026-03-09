@@ -19,6 +19,7 @@ using System.IO;
 using System.Diagnostics.Contracts;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
+using AECC.Core.Serialization;
 
 namespace AECC.Core
 {
@@ -51,6 +52,7 @@ namespace AECC.Core
 
         public void InitializeSystems()
         {
+            EntitySerializer.TypeIdStorage.ForEach(x => ComponentOwners[x.Value] = new HashSet<ECSEntity>());
             AllSystems = ECSAssemblyExtensions.GetAllSubclassOf(typeof(ECSExecutableContractContainer)).Where(x => this.staticContractFiltering(x)).Select(x => (ECSExecutableContractContainer)Activator.CreateInstance(x)).Where(x => x.WorldFilter(this.world)).ToList();
             AllSystems = AllSystems.Except(ReturnExceptedSystems()).ToList<ECSExecutableContractContainer>();
             foreach(ECSExecutableContractContainer system in AllSystems)

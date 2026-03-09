@@ -61,7 +61,7 @@ namespace AECC.Core
             this.instanceId = instanceid;
         }
 
-        public ECSEntity(ECSWorld world, ECSComponent[] eCSComponents)
+        public ECSEntity(ECSWorld world, ECSComponent[] eCSComponents, bool asyncMode = false)
         {
             this.ECSWorldOwner = world;
             entityComponents = new EntityComponentStorage(this);
@@ -69,7 +69,14 @@ namespace AECC.Core
             dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
             foreach (var component in eCSComponents)
             {
-                this.AddComponentSilent(component);
+                if(asyncMode)
+                {
+                    this.AddComponentSilentAsync(component).Wait();
+                }
+                else
+                {
+                    this.AddComponentSilent(component);
+                }
             }
         }
 

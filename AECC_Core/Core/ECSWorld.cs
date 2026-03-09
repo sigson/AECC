@@ -12,9 +12,23 @@ namespace AECC.Core
     class ECSWorld
     {
         private static ECSWorld SingletonFallback = null;
-        //public static Func<ECSWorld> GetWorld = () => SingletonFallback;
-        public static Func<Dictionary<long, ECSWorld>> GetAllWorlds = () => new Dictionary<long, ECSWorld>() { {SingletonFallback.instanceId, SingletonFallback} };
-        public static Func<long, ECSWorld> GetWorld = (long instance) => SingletonFallback;
+        public static Func<ECSWorld> GetSingletonFallback = () =>
+        {
+            if(SingletonFallback == null)
+            {
+                SingletonFallback = new ECSWorld();
+                SingletonFallback.InitWorldScope((val) => true);
+            }
+            return SingletonFallback;
+        };
+        public static Func<IDictionary<long, ECSWorld>> GetAllWorlds = () => new Dictionary<long, ECSWorld>() { {GetSingletonFallback().instanceId, GetSingletonFallback()} };
+        public static Func<long, ECSWorld> GetWorld = (long instance) => GetSingletonFallback();
+        public static Func<long, ECSWorld> GetEntityWorld = (long entityinstance) => GetSingletonFallback();
+        public static Func<long, (ECSWorld world, ECSEntity entity)> GetWorldAndEntity = (long entityinstance) =>
+        {
+            GetSingletonFallback().entityManager.TryGetEntitySyncronized(entityinstance, out var resentt);
+            return (GetSingletonFallback(), resentt);
+        };
         public long instanceId = Guid.NewGuid().GuidToLong();
         public string WorldMetaData = "";
         public ECSContractsManager contractsManager;
