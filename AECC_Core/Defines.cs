@@ -18,6 +18,7 @@ public static class Defines
     public static bool IgnoreNonDangerousExceptions = true;
     public static bool RedirectAllLogsToExeFile = false;
     public static bool AOTMode = false;
+    public static bool CutClientServerCollections = false;
     public static int TimerMinimumMSTick = 15;
     public static bool ThreadsMode = true;
     public static bool OneThreadMode = false;

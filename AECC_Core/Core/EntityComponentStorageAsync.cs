@@ -18,10 +18,40 @@ namespace AECC.Core
     {
         
         // Используем асинхронный словарь для компонентов
-        private readonly LockedDictionaryAsync<Type, ECSComponent> componentsAsync = new LockedDictionaryAsync<Type, ECSComponent>(true);
+        private LockedDictionaryAsync<Type, ECSComponent> componentsAsyncValue;
+        private LockedDictionaryAsync<Type, ECSComponent> componentsAsync
+        {
+            get
+            {
+                if (componentsAsyncValue == null)
+                {
+                    componentsAsyncValue = new LockedDictionaryAsync<Type, ECSComponent>(true);
+                }
+                return componentsAsyncValue;
+            }
+            set
+            {
+                componentsAsyncValue = value;
+            }
+        }
         
         // Контейнер сериализации также становится асинхронным
-        public LockedDictionaryAsync<long, object> SerializationContainerAsync = new LockedDictionaryAsync<long, object>();
+        private LockedDictionaryAsync<long, object> SerializationContainerAsyncValue;
+        public LockedDictionaryAsync<long, object> SerializationContainerAsync
+        {
+            get
+            {
+                if (SerializationContainerAsyncValue == null)
+                {
+                    SerializationContainerAsyncValue = new LockedDictionaryAsync<long, object>(true);
+                }
+                return SerializationContainerAsyncValue;
+            }
+            set
+            {
+                SerializationContainerAsyncValue = value;
+            }
+        }
 
         #region serialization
 
@@ -325,16 +355,27 @@ namespace AECC.Core
             component.ownerEntity = this.entity;
             component.ECSWorldOwner = this.entity?.ECSWorldOwner;
             if (this.entity != null)
-                this.entity.fastEntityComponentsId.AddI(component.instanceId, 0, this.entity.SerialLocker);
+            {
+                if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+                {
+                    this.entity.fastEntityComponentsId.AddI(component.instanceId, 0, this.entity.SerialLocker);
+                }
+            }
             else
+            {
                 NLogger.LogError("null owner entity");
-                
-            if (restoringMode)
-                await this.SerializationContainerAsync.AddAsync(component.GetId(), component);
-            else
-                await this.SerializationContainerAsync.SetValueAsync(component.GetId(), component);
-                
-            this.IdToTypeComponent.TryAdd(component.GetId(), component.GetTypeFast());
+            }
+            
+            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                if (restoringMode)
+                    await this.SerializationContainerAsync.AddAsync(component.GetId(), component);
+                else
+                    await this.SerializationContainerAsync.SetValueAsync(component.GetId(), component);
+            }
+            
+            if(IdToTypeMode)
+                this.IdToTypeComponent.TryAdd(component.GetId(), component.GetTypeFast());
             component.ECSWorldOwner?.entityManager.OnAddComponent(this.entity, component);
         }
 
@@ -375,7 +416,11 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                var result = await this.componentsAsync.TryGetValueAsync(this.IdToTypeComponent[componentTypeId]);
+                (bool Success, ECSComponent Value) result;
+                if(IdToTypeMode)
+                    result = await this.componentsAsync.TryGetValueAsync(this.IdToTypeComponent[componentTypeId]);
+                else
+                    result = await this.componentsAsync.TryGetValueAsync(componentTypeId.IdToECSType());
                 if (result.Success) component = result.Value;
             }
             catch (Exception ex)
@@ -428,10 +473,14 @@ namespace AECC.Core
         private async Task RemoveComponentProcessAsync(Type componentClass, ECSComponent component)
         {
             this.changedComponents.Remove(componentClass, out _);
-            await this.SerializationContainerAsync.RemoveAsync(component.GetId());
-            this.IdToTypeComponent.Remove(component.GetId(), out _);
-            this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
-            this.RemovedComponents.Add(component.GetId());
+            if(IdToTypeMode)
+                this.IdToTypeComponent.Remove(component.GetId(), out _);
+            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
+                await this.SerializationContainerAsync.RemoveAsync(component.GetId());
+                this.RemovedComponents.Add(component.GetId());
+            }
             component.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, component);
         }
 
@@ -462,11 +511,15 @@ namespace AECC.Core
                     else
                     {
                         this.changedComponents.Remove(removedComponent.GetTypeFast(), out _);
-                        this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
                         await this.componentsAsync.RemoveAsync(removedComponent.GetTypeFast());
-                        await this.SerializationContainerAsync.RemoveAsync(removedComponent.GetId());
-                        this.IdToTypeComponent.Remove(removedComponent.GetId(), out _);
-                        this.RemovedComponents.Add(removedComponent.GetId());
+                        if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+                        {
+                            this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
+                            await this.SerializationContainerAsync.RemoveAsync(removedComponent.GetId());
+                            this.RemovedComponents.Add(removedComponent.GetId());
+                        }
+                        if(IdToTypeMode)
+                            this.IdToTypeComponent.Remove(removedComponent.GetId(), out _);
                         removedComponent.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, removedComponent);
                         removedComponent.RemovingReaction(this.entity);
                     }
@@ -581,7 +634,11 @@ namespace AECC.Core
 
         public async Task<ECSComponent> GetComponentUnsafeAsync(long componentTypeId)
         {
-            var result = await this.componentsAsync.TryGetValueAsync(this.IdToTypeComponent[componentTypeId]);
+            (bool Success, ECSComponent Value) result;
+            if(IdToTypeMode)
+                result = await this.componentsAsync.TryGetValueAsync(this.IdToTypeComponent[componentTypeId]);
+            else
+                result = await this.componentsAsync.TryGetValueAsync(componentTypeId.IdToECSType());
             return result.Success ? result.Value : null;
         }
         #endregion
@@ -686,16 +743,24 @@ namespace AECC.Core
             this.componentsAsync.ContainsKeyAsync(componentClass);
         public Task<bool> HasComponentAsync(long componentClassId)
         {
-            return Task.Run(() => this.IdToTypeComponent.ContainsKey(componentClassId));
+            if(IdToTypeMode)
+                return Task.Run(() => this.IdToTypeComponent.ContainsKey(componentClassId));
+            else
+                return this.componentsAsync.ContainsKeyAsync(componentClassId.IdToECSType());
         }
 
         public async Task OnEntityDeleteAsync()
         {
             var removedComponents = await this.componentsAsync.ClearSnapshotAsync();
-            await this.SerializationContainerAsync.ClearAsync();
-            this.IdToTypeComponent.Clear();
+            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {    
+                await this.SerializationContainerAsync.ClearAsync();
+                this.RemovedComponents.Clear();
+            }
+            if(IdToTypeMode)
+                this.IdToTypeComponent.Clear();
             this.changedComponents.Clear();
-            this.RemovedComponents.Clear();
+            
             
             foreach (var component in removedComponents)
             {

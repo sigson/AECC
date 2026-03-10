@@ -23,7 +23,7 @@ namespace AECC.Collections
         }
 
         private LockedDictionaryAsync<TKey, bool> KeysHoldingStorage = null;
-        private ConcurrentDictionary<TKey, bool> KeysHoldingLockdownCache = new ConcurrentDictionary<TKey, bool>();
+        //private ConcurrentDictionary<TKey, bool> KeysHoldingLockdownCache = new ConcurrentDictionary<TKey, bool>();
         
         public bool HoldKeys = false;
         public bool HoldKeyStorage = false;

@@ -24,8 +24,6 @@ namespace AECC.Core
     {
         static new public long Id { get; set; } = 2;
         public string AliasName = "";
-        [System.NonSerialized]
-        public List<Type> TemplateAccessor = new List<Type>();
 
         [System.NonSerialized]
         public ECSEntityManager manager;
@@ -49,15 +47,21 @@ namespace AECC.Core
         public ECSEntity()
         {
             entityComponents = new EntityComponentStorage(this);
-            fastEntityComponentsId = new Dictionary<long, int>();
-            dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
+            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                fastEntityComponentsId = new Dictionary<long, int>();
+                dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
+            }
         }
 
         public ECSEntity(long instanceid)
         {
             entityComponents = new EntityComponentStorage(this);
-            fastEntityComponentsId = new Dictionary<long, int>();
-            dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
+            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                fastEntityComponentsId = new Dictionary<long, int>();
+                dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
+            }
             this.instanceId = instanceid;
         }
 
@@ -65,8 +69,11 @@ namespace AECC.Core
         {
             this.ECSWorldOwner = world;
             entityComponents = new EntityComponentStorage(this);
-            fastEntityComponentsId = new Dictionary<long, int>();
-            dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
+            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                fastEntityComponentsId = new Dictionary<long, int>();
+                dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
+            }
             foreach (var component in eCSComponents)
             {
                 if(asyncMode)
@@ -608,9 +615,12 @@ namespace AECC.Core
         public void OnDelete()
         {
             this.Alive = false;
-            this.dataAccessPolicies.Clear();
             this.entityComponents.OnEntityDelete();
-            this.fastEntityComponentsId.ClearI(this.SerialLocker);
+            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                this.dataAccessPolicies.Clear();
+                this.fastEntityComponentsId.ClearI(this.SerialLocker);
+            }
         }
 
         public void RemoveComponent<T>() where T : ECSComponent

@@ -93,8 +93,8 @@ namespace AECC.Core
         /// </summary>
         public Dictionary<long, IECSObjectPathContainer> childECSObjectsId = new Dictionary<long, IECSObjectPathContainer>();
         [System.NonSerialized]
-        private LockedDictionary<long, IECSObject> storagechildECSObjects;
-        private LockedDictionary<long, IECSObject> childECSObjects
+        private ILockedDictionary<long, IECSObject> storagechildECSObjects;
+        private ILockedDictionary<long, IECSObject> childECSObjects
         {
             get
             {

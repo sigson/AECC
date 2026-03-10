@@ -13,6 +13,7 @@ using AECC.Core.Serialization;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
 using AECC.Core.BuiltInTypes.Components;
+using System.Runtime.Serialization;
 
 namespace AECC.Core
 {
@@ -22,13 +23,77 @@ namespace AECC.Core
         private ECSEntity entity;
         public int ChangedComponent => changedComponents.Count;
         public bool isAsync => componentsAsync.GetCountAsync().Result > 0;
-        private readonly LockedDictionary<Type, ECSComponent> components = new LockedDictionary<Type, ECSComponent>(true);
+        private ILockedDictionary<Type, ECSComponent> componentsValue;
+        private ILockedDictionary<Type, ECSComponent> components
+        {
+            get
+            {
+                if (componentsValue == null)
+                {
+                    componentsValue = new LockedDictionary<Type, ECSComponent>(true);
+                }
+                return componentsValue;
+            }
+            set
+            {
+                componentsValue = value;
+            }
+        }
         private readonly IDictionary<Type, int> changedComponents = new DictionaryWrapper<Type, int>();
-        public readonly IDictionary<long, Type> IdToTypeComponent = new DictionaryWrapper<long, Type>();
-        public LockedDictionary<long, object> SerializationContainer = new LockedDictionary<long, object>();
+        public IDictionary<long, Type> IdToTypeComponentValue;
+        public IDictionary<long, Type> IdToTypeComponent
+        {
+            get
+            {
+                if (IdToTypeComponentValue == null)
+                {
+                    IdToTypeComponentValue = new Dictionary<long, Type>();
+                }
+                return IdToTypeComponentValue;
+            }
+            set
+            {
+                IdToTypeComponentValue = value;
+            }
+        }
+        private ILockedDictionary<long, object> SerializationContainerValue;
+        public ILockedDictionary<long, object> SerializationContainer
+        {
+            get
+            {
+                if (SerializationContainerValue == null)
+                {
+                    SerializationContainerValue = new LockedDictionary<long, object>();
+                }
+                return SerializationContainerValue;
+            }
+            set
+            {
+                SerializationContainerValue = value;
+            }
+        }
+
         public List<long> RemovedComponents = new List<long>();
         [System.NonSerialized]
-        public RWLock StabilizationLocker = new RWLock();
+        public RWLock StabilizationLockerValue;
+        [IgnoreDataMember]
+        public RWLock StabilizationLocker
+        {
+            get
+            {
+                if (StabilizationLockerValue == null)
+                {
+                    StabilizationLockerValue = new RWLock();
+                }
+                return StabilizationLockerValue;
+            }
+            set
+            {
+                StabilizationLockerValue = value;
+            }
+        }
+
+        private bool IdToTypeMode = false; // only for debug reason
 
         public EntityComponentStorage(ECSEntity entity)
         {
@@ -320,14 +385,26 @@ namespace AECC.Core
             component.ownerEntity = this.entity;
             component.ECSWorldOwner = this.entity?.ECSWorldOwner;
             if (this.entity != null)
-                this.entity.fastEntityComponentsId.AddI(component.instanceId, 0, this.entity.SerialLocker);
+            {
+                if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+                {
+                    this.entity.fastEntityComponentsId.AddI(component.instanceId, 0, this.entity.SerialLocker);
+                }
+            }
             else
+            {
                 NLogger.LogError("null owner entity");
-            if (restoringMode)
-                this.SerializationContainer.TryAdd(component.GetId(), component);
-            else
-                this.SerializationContainer[component.GetId()] = component;
-            this.IdToTypeComponent.TryAdd(component.GetId(), component.GetTypeFast());
+            }
+
+            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                if (restoringMode)
+                    this.SerializationContainer.TryAdd(component.GetId(), component);
+                else
+                    this.SerializationContainer[component.GetId()] = component;
+            }
+            if(IdToTypeMode)
+                this.IdToTypeComponent.TryAdd(component.GetId(), component.GetTypeFast());
             component.ECSWorldOwner?.entityManager.OnAddComponent(this.entity, component);
         }
 
@@ -383,7 +460,10 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                component = this.components[this.IdToTypeComponent[componentTypeId]];
+                if(IdToTypeMode)
+                    component = this.components[this.IdToTypeComponent[componentTypeId]];
+                else
+                    component = this.components[componentTypeId.IdToECSType()]; 
             }
             catch (Exception ex)
             {
@@ -437,10 +517,15 @@ namespace AECC.Core
         private void RemoveComponentProcess(Type componentClass, ECSComponent component)
         {
             this.changedComponents.Remove(componentClass, out _);
-            this.SerializationContainer.Remove(component.GetId(), out _);
-            this.IdToTypeComponent.Remove(component.GetId(), out _);
-            this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
-            this.RemovedComponents.Add(component.GetId());
+            if(IdToTypeMode)
+                this.IdToTypeComponent.Remove(component.GetId(), out _);
+            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                this.SerializationContainer.Remove(component.GetId(), out _);
+                this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
+                this.RemovedComponents.Add(component.GetId());
+            }
+            
             component.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, component);
         }
 
@@ -471,11 +556,16 @@ namespace AECC.Core
                         else
                         {
                             this.changedComponents.Remove(removedComponent.GetTypeFast(), out _);
-                            this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
                             this.components.Remove(removedComponent.GetTypeFast());
-                            this.SerializationContainer.Remove(removedComponent.GetId(), out _);
-                            this.IdToTypeComponent.Remove(removedComponent.GetId(), out _);
-                            this.RemovedComponents.Add(removedComponent.GetId());
+                            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+                            {
+                                this.SerializationContainer.Remove(removedComponent.GetId(), out _);
+                                this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
+                                this.RemovedComponents.Add(removedComponent.GetId());
+                            }
+                            if(IdToTypeMode)
+                                this.IdToTypeComponent.Remove(removedComponent.GetId(), out _);
+                            
                             removedComponent.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, removedComponent);
                             removedComponent.RemovingReaction(this.entity);
                         }
@@ -593,7 +683,10 @@ namespace AECC.Core
         public ECSComponent GetComponentUnsafe(long componentTypeId)
         {
             ECSComponent component;
-            return (!this.components.TryGetValue(this.IdToTypeComponent[componentTypeId], out component) ? null : component);
+            if(IdToTypeMode)
+                return !this.components.TryGetValue(this.IdToTypeComponent[componentTypeId], out component) ? null : component;
+            else
+                return !this.components.TryGetValue(componentTypeId.IdToECSType(), out component) ? null : component;
         }
         #endregion
 
@@ -683,16 +776,31 @@ namespace AECC.Core
         public bool HasComponent(Type componentClass) =>
             this.components.ContainsKey(componentClass);
 
-        public bool HasComponent(long componentClassId) =>
-            this.IdToTypeComponent.ContainsKey(componentClassId);
+        public bool HasComponent(long componentClassId)
+        {
+            if(IdToTypeMode)
+            {
+                return this.IdToTypeComponent.ContainsKey(componentClassId);
+            }
+            else
+            {
+                return this.components.ContainsKey(componentClassId.IdToECSType());
+            }
+        }
+            
 
         public void OnEntityDelete()
         {
             var removedComponents = this.components.ClearSnapshot();
-            this.SerializationContainer.Clear();
-            this.IdToTypeComponent.Clear();
+            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                this.SerializationContainer.Clear();
+                this.RemovedComponents.Clear();
+            }
+            if(IdToTypeMode)
+                this.IdToTypeComponent.Clear();
             this.changedComponents.Clear();
-            this.RemovedComponents.Clear();
+            
             this.IdToTypeComponent.Clear();
             foreach (var component in removedComponents)
             {

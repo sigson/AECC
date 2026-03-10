@@ -68,6 +68,7 @@ namespace AECC.Collections
         private int _processing = 0;
 
         private readonly StackTrace creationStackTrace;
+        private readonly bool createStackTrace = false;
         private readonly Type ownerType;
 
         public PriorityEventQueueOneTread(IEnumerable<TKey> priorityOrder, int gatesOpened = Int32.MaxValue, Func<int, int> gatesCounter = null, Type ownerType = null)
@@ -75,7 +76,8 @@ namespace AECC.Collections
             if (priorityOrder == null)
                 throw new ArgumentNullException(nameof(priorityOrder));
 
-            creationStackTrace = new StackTrace();
+            if(createStackTrace)
+                creationStackTrace = new StackTrace(true);
             this.ownerType = ownerType;
             OpenedDownGates = gatesOpened;
             GatesCounter = gatesCounter ?? (x => x + 1);
@@ -238,6 +240,7 @@ namespace AECC.Collections
         private readonly List<PriorityWrapper> _priorityOrder;
         private readonly object _lock = new object();
         private StackTrace creationStackTrace;
+        private bool createStackTrace = false;
         private Type ownerType;
 
         /// <summary>
@@ -253,7 +256,8 @@ namespace AECC.Collections
             if (priorityOrder == null)
                 throw new ArgumentNullException(nameof(priorityOrder));
 
-            creationStackTrace = new StackTrace();
+            if(createStackTrace)
+                creationStackTrace = new StackTrace(true);
             this.ownerType = ownerType;
             OpenedDownGates = gatesOpened;
             if (gatesCounter == null)

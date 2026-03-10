@@ -488,9 +488,13 @@ namespace AECC.Core
         public async Task OnDeleteAsync()
         {
             this.Alive = false;
-            this.dataAccessPolicies.Clear();
+            
             await this.entityComponents.OnEntityDeleteAsync();
-            this.fastEntityComponentsId.ClearI(this.SerialLocker);
+            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            {
+                this.dataAccessPolicies.Clear();
+                this.fastEntityComponentsId.ClearI(this.SerialLocker);
+            }
         }
 
         public Task RemoveComponentAsync<T>() where T : ECSComponent

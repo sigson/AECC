@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
-using KPreisser;
 using AECC.Core.Logging;
 
 namespace AECC.Extensions.ThreadingSync
@@ -166,7 +165,7 @@ namespace AECC.Extensions.ThreadingSync
                 else
                 {
 #if NET || UNITY || GODOT4
-                    lockobj = new AsyncReaderWriterLockSlim();
+                    //lockobj = new AsyncReaderWriterLockSlim();
 #else
                     NLogger.Error("AsyncReaderWriterLockSlim not supported, enable Defines.ThreadsMode or Defines.OneThread");
 #endif
@@ -443,7 +442,7 @@ namespace AECC.Extensions.ThreadingSync
                 else
                 {
     #if NET || UNITY || GODOT4
-                    lockobj = new AsyncReaderWriterLockSlim();
+                    //lockobj = new AsyncReaderWriterLockSlim();
     #else
                     NLogger.Error("AsyncReaderWriterLockSlim not supported, enable Defines.ThreadsMode or Defines.OneThread");
     #endif

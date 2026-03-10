@@ -15,9 +15,9 @@ namespace AECC.Core
     public class ECSEntityManager
     {
         private ECSWorld world;
-        public LockedDictionary<long, ECSEntity> EntityStorage = new LockedDictionary<long, ECSEntity>();
+        public ILockedDictionary<long, ECSEntity> EntityStorage = new LockedDictionary<long, ECSEntity>();
         public LockedDictionaryAsync<long, ECSEntity> EntityStorageAsync = new LockedDictionaryAsync<long, ECSEntity>();
-        public LockedDictionary<string, ECSEntity> PreinitializedEntities = new LockedDictionary<string, ECSEntity>();
+        public ILockedDictionary<string, ECSEntity> PreinitializedEntities = new LockedDictionary<string, ECSEntity>();
 
         public GraphSearchEngine graphSearchEngine;
 

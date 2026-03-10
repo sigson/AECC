@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace AECC.Collections
 {
-    public class LockedDictionary<TKey, TValue> : IDictionary<TKey, TValue>
+    public class LockedDictionary<TKey, TValue> : ILockedDictionary<TKey, TValue>
     {
         public class LockedValue
         {
@@ -22,11 +22,11 @@ namespace AECC.Collections
             public RWLock lockValue;
         }
         private LockedDictionary<TKey, bool> KeysHoldingStorage = null;
-        private ConcurrentDictionary<TKey, bool> KeysHoldingLockdownCache = new ConcurrentDictionary<TKey, bool>();
-        public bool HoldKeys = false;
-        public bool HoldKeyStorage = false;
+        //private ConcurrentDictionary<TKey, bool> KeysHoldingLockdownCache = new ConcurrentDictionary<TKey, bool>();
+        public bool HoldKeys { get; set; } = false;
+        public bool HoldKeyStorage { get; set; } = false;
         private readonly ConcurrentDictionary<TKey, LockedValue> dictionary = new ConcurrentDictionary<TKey, LockedValue>();
-        public bool LockValue = false;
+        public bool LockValue { get; set; } = false;
         private readonly RWLock GlobalLocker = new RWLock();
 
         public LockedDictionary(bool preserveLockingKeys = false)
