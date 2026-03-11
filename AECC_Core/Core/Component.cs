@@ -33,19 +33,40 @@ namespace AECC.Core
         public ComponentsDBComponent ownerDB;
         [System.NonSerialized]
         [IgnoreDataMember]
-        public ReaderWriterLockSlim locker = new ReaderWriterLockSlim();
+        private ReaderWriterLockSlim lockerValue = null;
+        [IgnoreDataMember]
+        public ReaderWriterLockSlim locker
+        {
+            get
+            {
+                if (lockerValue == null)
+                    lockerValue = new ReaderWriterLockSlim();
+                return lockerValue;
+            }
+            set
+            {
+                lockerValue = value;
+            }
+        }
         [System.NonSerialized]
         [IgnoreDataMember]
-        public SharedLock monoLocker = new SharedLock();
-
-        [System.NonSerialized]
+        private SharedLock monoLockerValue = null;
         [IgnoreDataMember]
-        public List<string> ConfigPath = new List<string>();
+        public SharedLock monoLocker
+        {
+            get
+            {
+                if (monoLockerValue == null)
+                    monoLockerValue = new SharedLock();
+                return monoLockerValue;
+            }
+            set
+            {
+                monoLockerValue = value;
+            }
+        }
 
         public Dictionary<long, ECSComponentGroup> ComponentGroups = new Dictionary<long, ECSComponentGroup>();//todo: concurrent replace to normal
-        [System.NonSerialized]
-        [IgnoreDataMember]
-        static public List<Action> StaticOnChangeHandlers = new List<Action>();
         [System.NonSerialized]
         [IgnoreDataMember]
         public List<Action<ECSEntity, ECSComponent>> OnChangeHandlers = new List<Action<ECSEntity, ECSComponent>>();
@@ -64,30 +85,30 @@ namespace AECC.Core
         }
 
         [System.NonSerialized]
-        private PriorityEventQueue<StateReactionType, Action> _stateReactionQueue = null;
+        private ComponentLifecycleState _lifecycleState = null;
+
         [IgnoreDataMember]
-        public PriorityEventQueue<StateReactionType, Action> StateReactionQueue
+        private ComponentLifecycleState LifecycleState
         {
             get
             {
-                if (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client)
-                    return ECSSharedField<PriorityEventQueue<StateReactionType, Action>>.GetOrAdd(instanceId, "StateReactionQueue", new PriorityEventQueue<StateReactionType, Action>(new List<StateReactionType>() { StateReactionType.Added, StateReactionType.Changed, StateReactionType.Removed }, 1, x => x + 2, this.GetTypeFast()));
+                if (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client)
+                {
+                    // Кешируем в ECSSharedField один легкий объект состояния
+                    return ECSSharedField<ComponentLifecycleState>.GetOrAdd(
+                        this.instanceId, 
+                        "LifecycleState", 
+                        () => new ComponentLifecycleState()
+                    );
+                }
                 else
                 {
-                    if (_stateReactionQueue == null)
+                    if (_lifecycleState == null)
                     {
-                        _stateReactionQueue = new PriorityEventQueue<StateReactionType, Action>(new List<StateReactionType>() { StateReactionType.Added, StateReactionType.Changed, StateReactionType.Removed }, 1, x => x + 2, this.GetTypeFast());
+                        _lifecycleState = new ComponentLifecycleState();
                     }
-                    return _stateReactionQueue;
+                    return _lifecycleState;
                 }
-
-            }
-            set
-            {
-                if (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client)
-                    ECSSharedField<PriorityEventQueue<StateReactionType, Action>>.SetCachedValue(instanceId, "StateReactionQueue", value);
-                else
-                    _stateReactionQueue = value;
             }
         }
 
@@ -170,6 +191,60 @@ namespace AECC.Core
             return ObjectType;
         }
 
+        private void ProcessLifecycleQueue()
+        {
+            var state = LifecycleState;
+
+            // Защита от параллельного запуска нескольких обработчиков одной и той же очереди
+            if (Interlocked.CompareExchange(ref state.Processing, 1, 0) != 0)
+            {
+                return;
+            }
+
+            TaskEx.RunAsync(() =>
+            {
+                while (true)
+                {
+                    Action actionToRun = null;
+
+                    lock (state.Lock)
+                    {
+                        // СТРОГИЙ ПРИОРИТЕТ ВЫПОЛНЕНИЯ: Add -> Change -> Remove
+                        if (state.PendingAdd != null)
+                        {
+                            actionToRun = state.PendingAdd;
+                            state.PendingAdd = null;
+                        }
+                        else if (state.PendingChanges != null && state.PendingChanges.Count > 0)
+                        {
+                            actionToRun = state.PendingChanges.Dequeue();
+                        }
+                        else if (state.PendingRemove != null)
+                        {
+                            actionToRun = state.PendingRemove;
+                            state.PendingRemove = null;
+                        }
+                        else
+                        {
+                            // Очередь пуста, снимаем флаг и выходим
+                            state.Processing = 0;
+                            return; 
+                        }
+                    }
+
+                    // Выполняем задачу. (Блокировки внутри делегатов сохранят вашу логику из оригинального кода)
+                    try
+                    {
+                        actionToRun?.Invoke();
+                    }
+                    catch (Exception ex)
+                    {
+                        NLogger.Log($"Error in component lifecycle execution: {ex.Message}\nType: {this.GetTypeFast()}");
+                    }
+                }
+            });
+        }
+
         // overridable functional for damage transformer, after adding component of damage effect - in this method we send transformer action to damage transformers agregator
         /// <summary>
         /// ATTENTION! Use lock(this.SerialLocker) if you want to edit fields value for prevent serialization error!
@@ -177,18 +252,28 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void AddedReaction(ECSEntity entity)
         {
-            StateReactionQueue.AddEvent(StateReactionType.Added, () =>
+            var state = LifecycleState;
+            lock (state.Lock)
             {
-                lock (this.StateReactionQueue)
+                if (AlreadyRemovedReaction) return;
+                
+                state.PendingAdd = () =>
                 {
-                    this.OnAdded(entity);
-                }
-            });
+                    lock (state.Lock)
+                    {
+                        this.OnAdded(entity);
+                    }
+                };
+            }
+            ProcessLifecycleQueue();
         }
 
         protected virtual void OnAdded(ECSEntity entity)
         {
-            this.MarkAsChanged();
+            if (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server)
+            {
+                this.MarkAsChanged();
+            }
         }
 
         /// <summary>
@@ -197,22 +282,32 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void ChangeReaction(ECSEntity entity)
         {
-            StateReactionQueue.AddEvent(StateReactionType.Changed, () =>
+            var state = LifecycleState;
+            lock (state.Lock)
             {
-                lock (this.StateReactionQueue)
+                if (AlreadyRemovedReaction) return;
+
+                if (state.PendingChanges == null)
+                    state.PendingChanges = new Queue<Action>();
+
+                state.PendingChanges.Enqueue(() =>
                 {
-                    List<Action<ECSEntity, ECSComponent>> callbackActions;
-                    ECSComponentManager.OnChangeCallbacksDB.TryGetValue(this.GetId(), out callbackActions);
-                    this.OnChanged(entity);
-                    if (callbackActions != null)
+                    lock (state.Lock)
                     {
-                        foreach (var act in callbackActions)
+                        List<Action<ECSEntity, ECSComponent>> callbackActions;
+                        ECSComponentManager.OnChangeCallbacksDB.TryGetValue(this.GetId(), out callbackActions);
+                        this.OnChanged(entity);
+                        if (callbackActions != null)
                         {
-                            act(entity, this);
+                            foreach (var act in callbackActions)
+                            {
+                                act(entity, this);
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
+            ProcessLifecycleQueue();
         }
 
         protected virtual void OnChanged(ECSEntity entity)
@@ -225,25 +320,23 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void RemovingReaction(ECSEntity entity)
         {
-            if (AlreadyRemovedReaction)//unsafe, but i don't care
-            {
-                return;
-            }
+            if (AlreadyRemovedReaction) return;
             AlreadyRemovedReaction = true;
-            StateReactionQueue.AddEvent(StateReactionType.Removed, () =>
+
+            var state = LifecycleState;
+            lock (state.Lock)
             {
-                lock (this.StateReactionQueue)
+                state.PendingRemove = () =>
                 {
-                    if (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client || this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Offline)
+                    lock (state.Lock)
                     {
-                        
+                        this.OnRemoved(entity);
+                        ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
+                        this.IECSDispose();
                     }
-                    
-                    this.OnRemoved(entity);
-                    ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
-                    this.IECSDispose();
-                }
-            });
+                };
+            }
+            ProcessLifecycleQueue();
         }
 
         protected virtual void OnRemoved(ECSEntity entity)
@@ -269,10 +362,19 @@ namespace AECC.Core
 
         public void OnRemove()
         {
-            ConfigPath.Clear();
             ComponentGroups.ClearI(this.SerialLocker);
             OnChangeHandlers.Clear();
             ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
+
+            // Сброс состояния для переиспользования компонента
+            lock (LifecycleState.Lock)
+            {
+                LifecycleState.PendingAdd = null;
+                LifecycleState.PendingChanges?.Clear();
+                LifecycleState.PendingRemove = null;
+                LifecycleState.Processing = 0;
+                AlreadyRemovedReaction = false;
+            }
         }
         public void RunOnChangeCallbacks(ECSEntity parentEntity)
         {
@@ -280,5 +382,14 @@ namespace AECC.Core
         }
 
         public object Clone() => MemberwiseClone();
+
+        public class ComponentLifecycleState
+        {
+            public readonly object Lock = new object();
+            public int Processing = 0;
+            public Action PendingAdd = null;
+            public Queue<Action> PendingChanges = null;
+            public Action PendingRemove = null;
+    }
     }
 }

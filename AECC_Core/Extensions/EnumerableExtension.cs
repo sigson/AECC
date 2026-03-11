@@ -197,6 +197,96 @@ public static class EnumerableExtension
         int actualCount = Math.Min(count, availableCount);
         return list.OrderBy(_ => rand1.Next()).Take(actualCount);
     }
+
+    [ThreadStatic]
+    private static Random _random;
+    private static Random Rnd => _random ?? (_random = new Random(Guid.NewGuid().GetHashCode()));
+
+    public static IEnumerable<T> TakeRandomOptimized<T>(this IEnumerable<T> source, int count = -1)
+    {
+        if (source == null)
+            throw new ArgumentNullException(nameof(source));
+
+        if (count == -1)
+        {
+            // Пытаемся узнать размер без перебора коллекции (замена TryGetNonEnumeratedCount)
+            if (TryGetCount(source, out int totalCount))
+            {
+                if (totalCount == 0) return Enumerable.Empty<T>();
+                count = Rnd.Next(1, totalCount + 1); 
+            }
+            else
+            {
+                // Если размер неизвестен (например, это LINQ-запрос типа Where), 
+                // придется загрузить в память, чтобы узнать из какого числа брать Random.
+                var list = source.ToList();
+                if (list.Count == 0) return Enumerable.Empty<T>();
+                
+                count = Rnd.Next(1, list.Count + 1);
+                return TakeRandomIterator(list, count);
+            }
+        }
+
+        if (count < 0)
+            throw new ArgumentOutOfRangeException(nameof(count), "Count cannot be negative");
+
+        if (count == 0)
+            return Enumerable.Empty<T>();
+
+        return TakeRandomIterator(source, count);
+    }
+
+    // Приватный хелпер для определения размера коллекции (O(1) по времени)
+    private static bool TryGetCount<T>(IEnumerable<T> source, out int count)
+    {
+        if (source is ICollection<T> collection) { count = collection.Count; return true; }
+        if (source is IReadOnlyCollection<T> readOnlyCollection) { count = readOnlyCollection.Count; return true; }
+        if (source is System.Collections.ICollection nonGenericCollection) { count = nonGenericCollection.Count; return true; }
+        
+        count = 0;
+        return false;
+    }
+
+    private static IEnumerable<T> TakeRandomIterator<T>(IEnumerable<T> source, int count)
+    {
+        T[] reservoir = new T[count];
+        int i = 0;
+
+        foreach (var item in source)
+        {
+            if (i < count)
+            {
+                reservoir[i] = item;
+            }
+            else
+            {
+                int j = Rnd.Next(i + 1);
+                if (j < count)
+                {
+                    reservoir[j] = item;
+                }
+            }
+            i++;
+        }
+
+        int actualCount = Math.Min(count, i);
+
+        // Перемешиваем результат, используя классический обмен через переменную
+        // (совместимо даже с очень старым C#, где нет синтаксиса кортежей)
+        for (int k = actualCount - 1; k > 0; k--)
+        {
+            int swapIndex = Rnd.Next(k + 1);
+            T temp = reservoir[k];
+            reservoir[k] = reservoir[swapIndex];
+            reservoir[swapIndex] = temp;
+        }
+
+        for (int k = 0; k < actualCount; k++)
+        {
+            yield return reservoir[k];
+        }
+    }
+
     public static void ForEach<TKey>(this IEnumerable<TKey> enumerable, Action<TKey> compute)
     {
         Collections.ForEach<TKey>(enumerable, compute);

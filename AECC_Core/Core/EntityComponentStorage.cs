@@ -430,7 +430,7 @@ namespace AECC.Core
                 component.ownerEntity = restoringOwner;
             if(component.ECSWorldOwner != null)
                 component.Unregistered = false;
-            component.StateReactionQueue = oldcomponent.StateReactionQueue;
+            //component.StateReactionQueue = oldcomponent.StateReactionQueue;
             if (!silent)
             {
                 Type componentClass = component.GetTypeFast();

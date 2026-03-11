@@ -67,10 +67,6 @@ namespace AECC.Core
         public IECSObjectSerializedStateMode ChangesState = IECSObjectSerializedStateMode.NoData;
         public bool HasChildChanges = true; //after creation = yes
         public long ownerECSObjectId;
-
-        [System.NonSerialized]
-        RWLock NodeLock = new RWLock();
-        //[System.NonSerialized]
         public bool ChildDispose = false; //for db component may be true
         public bool RebaseChildren = true;
 
