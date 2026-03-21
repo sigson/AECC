@@ -40,8 +40,6 @@ namespace AECC.Core.Logging
                 }
             }
 
-            logsDumpStorage.AppendLine(message);
-
             if(Defines.OneThreadMode && !Defines.RedirectAllLogsToExeFile)
             {
                 PrintErrorBase(type, color, message, logstack);
@@ -52,7 +50,20 @@ namespace AECC.Core.Logging
             }
         }
 
-        public static StringBuilder logsDumpStorage = new StringBuilder();
+        public static StringBuilder logsDumpStorage
+        {
+            get {
+                var sb = new StringBuilder();
+                var cacheLogs = logsBag;
+                logsBag = new ConcurrentQueue<(string, ConsoleColor, string)>();
+                foreach (var log in cacheLogs)
+                {
+                    sb.AppendLine(log.Item3);
+                }
+                cacheLogs.Clear();
+                return sb;
+            }
+        }
 
         public static void PrintErrorBase(string type, ConsoleColor color, string message, string logstack = "")
         {

@@ -1,0 +1,1 @@
+this.world.contractsManager.OnEntityCreated(Entity); and other methods into EntityManager - on big load destroy program

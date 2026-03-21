@@ -37,7 +37,8 @@ namespace AECC.Core
             get {
                 if (ECSWorldOwnerId == 0)
                 {
-                    NLogger.LogError($"IECSObject '{instanceId}: {this.GetType().Name}': ECSWorldOwnerId == 0");
+                    if (!Defines.IgnoreNonDangerousExceptions)
+                        NLogger.LogError($"IECSObject '{instanceId}: {this.GetType().Name}': ECSWorldOwnerId == 0");
                     return null;
                 }
                 else

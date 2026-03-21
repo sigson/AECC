@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using AECC;
 
-public static class Defines
+public static partial class Defines
 {
     public static bool SerializationResultPrint = false;
     public static bool ECSNetworkTypeLogging = false;
