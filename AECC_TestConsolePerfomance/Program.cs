@@ -1,11 +1,17 @@
-﻿namespace AECC_TestConsolePerfomance
+﻿using Async;
+using Threads;
+
+namespace AECC_TestConsolePerfomance
 {
     internal class Program
     {
         static void Main(string[] args)
         {
-            new Simulation().Start();
-            //Console.WriteLine("Hello, World!");
+            //new Thread(() => new Simulation().Start()).Start();
+            new Thread(() => new SimulationPipelines().Start()).Start();
+            
+            //new Thread(() => new SimulationThreads().Start()).Start();
+            Console.ReadLine();
         }
     }
 }
