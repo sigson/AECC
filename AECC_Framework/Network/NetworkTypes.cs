@@ -10,7 +10,70 @@ namespace AECC.Network
         WebSocket,
         WebSocketSecure,
         HTTP,
-        HTTPS
+        HTTPS,
+
+        /// <summary>
+        /// Godot 3 WebSocket client (single-threaded, poll-based).
+        /// Client-only — cannot be used as a server/listener.
+        /// Designed for web exports where multithreading is unavailable.
+        /// </summary>
+        WebSocketGodot,
+
+        /// <summary>
+        /// Godot 3 WebSocket Secure client (single-threaded, poll-based).
+        /// Client-only — cannot be used as a server/listener.
+        /// Designed for web exports where multithreading is unavailable.
+        /// </summary>
+        WebSocketSecureGodot
+    }
+
+    /// <summary>
+    /// Protocol classification helpers.
+    /// Centralizes knowledge about which protocols use stream framing,
+    /// which are connection-oriented, and which are Godot single-threaded variants.
+    /// </summary>
+    public static class ProtocolTraits
+    {
+        /// <summary>
+        /// Returns true if the protocol requires length-prefixed stream framing
+        /// (StreamFrameAccumulator). Currently only TCP.
+        /// All other protocols (WebSocket, UDP, Godot WS) use message-based
+        /// datagram framing (DatagramFrame).
+        /// </summary>
+        public static bool UsesStreamFraming(NetworkProtocol protocol)
+        {
+            return protocol == NetworkProtocol.TCP;
+        }
+
+        /// <summary>
+        /// Returns true if the protocol is connection-oriented and requires
+        /// the identity handshake (AssignId → ConfirmId / RestoreId → RestoreAccepted).
+        /// </summary>
+        public static bool IsConnectionOriented(NetworkProtocol protocol)
+        {
+            switch (protocol)
+            {
+                case NetworkProtocol.TCP:
+                case NetworkProtocol.WebSocket:
+                case NetworkProtocol.WebSocketSecure:
+                case NetworkProtocol.WebSocketGodot:
+                case NetworkProtocol.WebSocketSecureGodot:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Returns true if the protocol is a Godot single-threaded variant.
+        /// These protocols must never be used as server/listener endpoints
+        /// and must not be combined with any multithreaded API calls.
+        /// </summary>
+        public static bool IsGodotProtocol(NetworkProtocol protocol)
+        {
+            return protocol == NetworkProtocol.WebSocketGodot
+                || protocol == NetworkProtocol.WebSocketSecureGodot;
+        }
     }
 
     /// <summary>

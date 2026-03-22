@@ -67,7 +67,7 @@ namespace AECC.Network
         /// <summary>All confirmed sockets by ID (server-side).</summary>
         public ConcurrentDictionary<long, ISocketAdapter> SocketsById = new();
 
-        /// <summary>Per-socket stream frame accumulators (for TCP).</summary>
+        /// <summary>Per-socket stream frame accumulators (for stream-based protocols).</summary>
         private ConcurrentDictionary<ISocketAdapter, StreamFrameAccumulator> _accumulators = new();
 
         /// <summary>Per-socket RPC bridges.</summary>
@@ -169,7 +169,7 @@ namespace AECC.Network
         internal void SendSystemMessage(ISocketAdapter socket, byte msgType, byte[] payload)
         {
             byte[] frame;
-            if (socket.Protocol == NetworkProtocol.TCP)
+            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
                 frame = StreamFrameAccumulator.Pack(msgType, payload);
             else
                 frame = DatagramFrame.Pack(msgType, payload);
@@ -183,6 +183,12 @@ namespace AECC.Network
 
         private void StartListener(NetworkEndpointConfig config)
         {
+            // ── Godot protocols are client-only ──
+            if (ProtocolTraits.IsGodotProtocol(config.Protocol))
+                throw new NotSupportedException(
+                    $"Protocol {config.Protocol} is client-only and cannot be used as a server/listener. " +
+                    "Use WebSocket or WebSocketSecure (NetCoreServer-based) for server endpoints.");
+
             IServerAdapter server;
 
             switch (config.Protocol)
@@ -247,6 +253,17 @@ namespace AECC.Network
                 return;
             }
 
+            // ── Godot protocols cannot be auto-created here ──
+            // They must be registered externally via RegisterExternalClient().
+            if (ProtocolTraits.IsGodotProtocol(config.Protocol))
+            {
+                NLogger.LogError(
+                    $"Cannot auto-create {config.Protocol} client from StartClient(). " +
+                    "Godot WebSocket clients are Godot Nodes — create the WSClientGodot in the scene tree, " +
+                    "call InitializeClient(), then register via NetworkService.RegisterExternalClient().");
+                return;
+            }
+
             ISocketAdapter client;
 
             switch (config.Protocol)
@@ -274,14 +291,67 @@ namespace AECC.Network
                     throw new NotSupportedException($"Protocol {config.Protocol} not supported for client");
             }
 
+            WireClientEvents(client, config, key);
+            client.Connect();
+
+            NLogger.LogNetwork($"Client connecting: {config.Protocol} to {config.Host}:{config.Port}");
+        }
+
+        /// <summary>
+        /// Register an externally-created ISocketAdapter (e.g. WSClientGodot) with the network service.
+        ///
+        /// The caller is responsible for:
+        ///   1. Creating and initializing the socket (e.g. WSClientGodot.InitializeClient())
+        ///   2. Adding it to the Godot scene tree (if applicable)
+        ///   3. Calling Connect() after registration, OR setting autoConnect = true
+        ///
+        /// This hooks the socket into the full event bus pipeline:
+        /// identity handshake, outbound buffering, ping service, event dispatch.
+        ///
+        /// Usage (Godot):
+        ///   var ws = new WSClientGodot();
+        ///   AddChild(ws);
+        ///   ws.InitializeClient("example.com", 443, protocol: NetworkProtocol.WebSocketSecureGodot);
+        ///   NetworkService.instance.RegisterExternalClient(ws, config);
+        ///   ws.Connect();
+        /// </summary>
+        /// <param name="client">Pre-created socket adapter.</param>
+        /// <param name="config">Endpoint configuration describing this connection.</param>
+        /// <param name="autoConnect">If true, calls client.Connect() after registration.</param>
+        public void RegisterExternalClient(ISocketAdapter client, NetworkEndpointConfig config, bool autoConnect = false)
+        {
+            if (config.IsListener)
+                throw new ArgumentException("Cannot register a client socket with IsListener = true");
+
+            var key = config.RouteKey;
+
+            if (ClientSockets.ContainsKey(key))
+            {
+                NLogger.LogNetwork(
+                    $"Client connection already exists for {config.Protocol} {config.Host}:{config.Port}, skipping registration");
+                return;
+            }
+
+            WireClientEvents(client, config, key);
+
+            NLogger.LogNetwork($"External client registered: {config.Protocol} to {config.Host}:{config.Port}");
+
+            if (autoConnect)
+                client.Connect();
+        }
+
+        /// <summary>
+        /// Wire up a client socket's events and register it in ClientSockets.
+        /// Shared by StartClient and RegisterExternalClient.
+        /// </summary>
+        private void WireClientEvents(ISocketAdapter client, NetworkEndpointConfig config,
+            (NetworkProtocol, string, int) key)
+        {
             client.Connected += OnTransportClientSelfConnected;
             client.Disconnected += (s) => OnTransportClientSelfDisconnected(s, config);
             client.DataReceived += OnRawDataReceived;
 
             ClientSockets[key] = client;
-            client.Connect();
-
-            NLogger.LogNetwork($"Client connecting: {config.Protocol} to {config.Host}:{config.Port}");
         }
 
         /// <summary>
@@ -293,6 +363,15 @@ namespace AECC.Network
             if (dest.IsSocketRouted)
             {
                 NLogger.LogError($"Cannot auto-create connection for socket-routed destination ID={dest.SocketId}");
+                return;
+            }
+
+            // Godot protocols can't be auto-created
+            if (ProtocolTraits.IsGodotProtocol(dest.Protocol))
+            {
+                NLogger.LogError(
+                    $"Cannot auto-create {dest.Protocol} connection to {dest.Host}:{dest.Port}. " +
+                    "Register Godot WebSocket clients manually via RegisterExternalClient().");
                 return;
             }
 
@@ -313,9 +392,9 @@ namespace AECC.Network
         {
             socket.DataReceived += OnRawDataReceived;
 
-            if (IsConnectionOriented(socket.Protocol))
+            if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
             {
-                if (socket.Protocol == NetworkProtocol.TCP)
+                if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
                     _accumulators[socket] = new StreamFrameAccumulator();
 
                 _identityManager.ServerOnClientConnected(socket);
@@ -333,7 +412,7 @@ namespace AECC.Network
             if (_rpcBridges.TryRemove(socket, out var bridge))
                 bridge.Dispose();
 
-            if (IsConnectionOriented(socket.Protocol))
+            if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
                 _identityManager.ServerOnClientDisconnected(socket);
 
             if (socket.Id != 0)
@@ -342,10 +421,10 @@ namespace AECC.Network
 
         private void OnTransportClientSelfConnected(ISocketAdapter socket)
         {
-            if (socket.Protocol == NetworkProtocol.TCP)
+            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
                 _accumulators[socket] = new StreamFrameAccumulator();
 
-            if (IsConnectionOriented(socket.Protocol))
+            if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
                 _identityManager.ClientOnConnected(socket);
 
             var key = (socket.Protocol, socket.Address, socket.Port);
@@ -401,9 +480,14 @@ namespace AECC.Network
             if (socket.Id != 0)
                 SocketsById[socket.Id] = socket;
 
-            var rpcBridge = new RpcBridge(socket);
-            _rpcBridges[socket] = rpcBridge;
-            rpcBridge.Start();
+            // RPC bridge: skip for Godot protocols (StreamJsonRpc uses System.IO.Pipelines
+            // which requires async threading — incompatible with single-threaded Godot web)
+            if (!ProtocolTraits.IsGodotProtocol(socket.Protocol))
+            {
+                var rpcBridge = new RpcBridge(socket);
+                _rpcBridges[socket] = rpcBridge;
+                rpcBridge.Start();
+            }
 
             if (IsServer)
                 EventManager.MaliciousScoringStorage[socket.Id] = new ScoreObject { SocketId = socket.Id };
@@ -530,7 +614,7 @@ namespace AECC.Network
 
         private void OnRawDataReceived(ISocketAdapter socket, byte[] rawData)
         {
-            if (socket.Protocol == NetworkProtocol.TCP)
+            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
             {
                 if (!_accumulators.TryGetValue(socket, out var acc))
                 {
@@ -661,7 +745,7 @@ namespace AECC.Network
             }
 
             byte[] frame;
-            if (protocol == NetworkProtocol.TCP)
+            if (ProtocolTraits.UsesStreamFraming(protocol))
                 frame = StreamFrameAccumulator.Pack(MessageType.Event, serializedPayload);
             else
                 frame = DatagramFrame.Pack(MessageType.Event, serializedPayload);
@@ -692,7 +776,7 @@ namespace AECC.Network
             {
                 var socket = kvp.Value;
                 byte[] frame;
-                if (socket.Protocol == NetworkProtocol.TCP)
+                if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
                     frame = StreamFrameAccumulator.Pack(MessageType.Event, serializedPayload);
                 else
                     frame = DatagramFrame.Pack(MessageType.Event, serializedPayload);
@@ -717,13 +801,6 @@ namespace AECC.Network
         // =====================================================================
         //  Helpers
         // =====================================================================
-
-        private static bool IsConnectionOriented(NetworkProtocol protocol)
-        {
-            return protocol == NetworkProtocol.TCP
-                || protocol == NetworkProtocol.WebSocket
-                || protocol == NetworkProtocol.WebSocketSecure;
-        }
 
         private static SslContext CreateSslContext(NetworkEndpointConfig config)
         {

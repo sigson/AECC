@@ -312,7 +312,7 @@ namespace AECC.Network
         private void SendSystemMessage(ISocketAdapter socket, byte msgType, byte[] payload)
         {
             byte[] frame;
-            if (socket.Protocol == NetworkProtocol.TCP)
+            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
                 frame = StreamFrameAccumulator.Pack(msgType, payload);
             else
                 frame = DatagramFrame.Pack(msgType, payload);

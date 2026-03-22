@@ -17,6 +17,10 @@ namespace AECC.Network
     /// Wire protocol: RPC messages are sent/received with MessageType 0x20.
     /// The rest of the binary protocol (events, system handshake) is unaffected.
     ///
+    /// NOTE: RpcBridge uses System.IO.Pipelines and async threading internally.
+    /// It is NOT compatible with single-threaded Godot protocols (WebSocketGodot,
+    /// WebSocketSecureGodot). NetworkService skips RPC bridge creation for those.
+    ///
     /// Usage:
     ///   var bridge = new RpcBridge(socket, myRpcTargetObject);
     ///   bridge.Start();
@@ -103,7 +107,7 @@ namespace AECC.Network
                         byte[] payload = segment.ToArray();
                         byte[] frame;
 
-                        if (_socket.Protocol == NetworkProtocol.TCP)
+                        if (ProtocolTraits.UsesStreamFraming(_socket.Protocol))
                             frame = StreamFrameAccumulator.Pack(RpcMessageType, payload);
                         else
                             frame = DatagramFrame.Pack(RpcMessageType, payload);
