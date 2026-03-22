@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using AECC.Core.Logging;
+using AECC.Extensions;
 
 namespace AECC.Network
 {
@@ -98,7 +99,7 @@ namespace AECC.Network
         private readonly ConcurrentDictionary<(NetworkProtocol, string, int), DestinationBuffer> _routeBuffers = new();
         private readonly ConcurrentDictionary<long, DestinationBuffer> _socketIdBuffers = new();
 
-        private Timer _sweepTimer;
+        private TimerCompat _sweepTimer;
         private readonly Action<NetworkDestination> _connectFactory;
         private readonly Func<NetworkDestination, ISocketAdapter> _socketResolver;
 
@@ -119,9 +120,12 @@ namespace AECC.Network
             _connectFactory = connectFactory;
             _socketResolver = socketResolver;
 
-            _sweepTimer = new Timer(SweepCallback, null,
+            _sweepTimer = new TimerCompat(
                 OutboundBufferSettings.SweepIntervalMs,
-                OutboundBufferSettings.SweepIntervalMs);
+                (sender, e) => SweepCallback(),
+                loop: true,
+                asyncRun: true);
+            _sweepTimer.Start();
         }
 
         // =====================================================================
@@ -233,7 +237,7 @@ namespace AECC.Network
         //  Background sweep (age-based flush)
         // =====================================================================
 
-        private void SweepCallback(object state)
+        private void SweepCallback()
         {
             long nowTicks = DateTime.UtcNow.Ticks;
             long maxAgeTicks = TimeSpan.FromMilliseconds(OutboundBufferSettings.MaxBufferAgeMs).Ticks;
@@ -353,6 +357,7 @@ namespace AECC.Network
 
         public void Dispose()
         {
+            _sweepTimer?.Stop();
             _sweepTimer?.Dispose();
             _sweepTimer = null;
         }

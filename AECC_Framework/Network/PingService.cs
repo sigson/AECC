@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Threading;
 using AECC.Core.Logging;
+using AECC.Extensions;
 
 namespace AECC.Network
 {
@@ -45,7 +45,7 @@ namespace AECC.Network
     /// </summary>
     public class PingService : IDisposable
     {
-        private Timer _timer;
+        private TimerCompat _timer;
 
         /// <summary>
         /// Reference to the set of confirmed sockets to ping.
@@ -77,10 +77,11 @@ namespace AECC.Network
         /// </summary>
         public void Start()
         {
-            _timer = new Timer(PingTick, null, PingSettings.IntervalMs, PingSettings.IntervalMs);
+            _timer = new TimerCompat(PingSettings.IntervalMs, (sender, e) => PingTick(), loop: true, asyncRun: true);
+            _timer.Start();
         }
 
-        private void PingTick(object state)
+        private void PingTick()
         {
             long nowTicks = DateTime.UtcNow.Ticks;
             var sockets = _socketsProvider();
@@ -150,6 +151,7 @@ namespace AECC.Network
 
         public void Dispose()
         {
+            _timer?.Stop();
             _timer?.Dispose();
             _timer = null;
         }

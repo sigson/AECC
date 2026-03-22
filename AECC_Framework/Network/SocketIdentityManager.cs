@@ -22,6 +22,19 @@ namespace AECC.Network
     }
 
     /// <summary>
+    /// Reason the socket became ready — used to distinguish new vs restored connections
+    /// for dispatching the correct lifecycle event.
+    /// </summary>
+    public enum SocketReadyReason
+    {
+        /// <summary>Brand new connection with a freshly assigned ID.</summary>
+        NewConnection,
+
+        /// <summary>Reconnected socket that restored a previously assigned ID.</summary>
+        Restored
+    }
+
+    /// <summary>
     /// Tracks a single socket's identity state and queued messages.
     /// </summary>
     public class SocketIdentityEntry
@@ -69,7 +82,7 @@ namespace AECC.Network
         public bool ClientIsReady { get; private set; }
 
         private readonly bool _isServer;
-        private readonly Action<ISocketAdapter> _onSocketReady;
+        private readonly Action<ISocketAdapter, SocketReadyReason> _onSocketReady;
         private readonly Action<ISocketAdapter> _onSocketDisconnected;
 
         /// <summary>
@@ -79,7 +92,7 @@ namespace AECC.Network
         private readonly Action<ISocketAdapter, byte[]> _onFlushMessage;
 
         public SocketIdentityManager(bool isServer,
-            Action<ISocketAdapter> onSocketReady,
+            Action<ISocketAdapter, SocketReadyReason> onSocketReady,
             Action<ISocketAdapter> onSocketDisconnected,
             Action<ISocketAdapter, byte[]> onFlushMessage = null)
         {
@@ -155,7 +168,7 @@ namespace AECC.Network
                         ConfirmedSockets[confirmedId] = entry;
 
                         NLogger.LogNetwork($"Socket {confirmedId} identity confirmed ({socket.Address}:{socket.Port})");
-                        _onSocketReady?.Invoke(socket);
+                        _onSocketReady?.Invoke(socket, SocketReadyReason.NewConnection);
 
                         // Flush queued messages
                         FlushPendingMessages(entry);
@@ -183,7 +196,7 @@ namespace AECC.Network
                         SendSystemMessage(socket, MessageType.RestoreAccepted, BitConverter.GetBytes(restoreId));
 
                         NLogger.LogNetwork($"Socket {restoreId} restored from {socket.Address}:{socket.Port}");
-                        _onSocketReady?.Invoke(socket);
+                        _onSocketReady?.Invoke(socket, SocketReadyReason.Restored);
                         FlushPendingMessages(entry);
                     }
                     else
@@ -264,7 +277,7 @@ namespace AECC.Network
                     ClientIsReady = true;
 
                     NLogger.LogNetwork($"Client received ID {id}, confirmed.");
-                    _onSocketReady?.Invoke(socket);
+                    _onSocketReady?.Invoke(socket, SocketReadyReason.NewConnection);
                     return true;
                 }
 
@@ -275,7 +288,7 @@ namespace AECC.Network
                     ClientIsReady = true;
 
                     NLogger.LogNetwork($"Client ID {id} restored successfully.");
-                    _onSocketReady?.Invoke(socket);
+                    _onSocketReady?.Invoke(socket, SocketReadyReason.Restored);
                     return true;
                 }
 

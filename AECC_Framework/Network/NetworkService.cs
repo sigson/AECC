@@ -76,8 +76,8 @@ namespace AECC.Network
         /// <summary>Identity manager for connection-oriented protocols.</summary>
         private SocketIdentityManager _identityManager;
 
-        /// <summary>Reconnection timers for client sockets.</summary>
-        private ConcurrentDictionary<(NetworkProtocol, string, int), System.Timers.Timer> _reconnectTimers = new();
+        /// <summary>Reconnection timers for client sockets (TimerCompat-based).</summary>
+        private ConcurrentDictionary<(NetworkProtocol, string, int), TimerCompat> _reconnectTimers = new();
 
         /// <summary>
         /// Outbound buffer hub. Buffers events while connections are being established
@@ -322,7 +322,7 @@ namespace AECC.Network
             }
             else
             {
-                OnSocketIdentityReady(socket);
+                OnSocketIdentityReady(socket, SocketReadyReason.NewConnection);
             }
         }
 
@@ -366,13 +366,15 @@ namespace AECC.Network
             var dest = config.ToDestination();
             OutboundBuffer.OnSocketDisconnected(socket, dest);
 
+            // ── Dispatch SocketDisconnectedEvent into the event bus ──
+            DispatchSocketDisconnectedEvent(socket);
+
             OnSocketDisconnected?.Invoke(socket);
 
             var key = config.RouteKey;
             if (!_reconnectTimers.ContainsKey(key))
             {
-                var timer = new System.Timers.Timer(2000);
-                timer.Elapsed += (_, _) =>
+                var timer = new TimerCompat(2000, (sender, e) =>
                 {
                     try
                     {
@@ -383,8 +385,8 @@ namespace AECC.Network
                     {
                         NLogger.LogError($"Reconnect failed: {ex.Message}");
                     }
-                };
-                timer.AutoReset = true;
+                }, loop: true, asyncRun: true);
+
                 _reconnectTimers[key] = timer;
                 timer.Start();
             }
@@ -394,7 +396,7 @@ namespace AECC.Network
         //  Identity callbacks
         // =====================================================================
 
-        private void OnSocketIdentityReady(ISocketAdapter socket)
+        private void OnSocketIdentityReady(ISocketAdapter socket, SocketReadyReason reason)
         {
             if (socket.Id != 0)
                 SocketsById[socket.Id] = socket;
@@ -409,6 +411,18 @@ namespace AECC.Network
             NetworkDestination dest = FindDestinationForSocket(socket);
             OutboundBuffer.OnSocketReady(socket, dest);
 
+            // ── Dispatch lifecycle event into the event bus ──
+            switch (reason)
+            {
+                case SocketReadyReason.NewConnection:
+                    DispatchSocketConnectedEvent(socket);
+                    break;
+
+                case SocketReadyReason.Restored:
+                    DispatchSocketReconnectedEvent(socket);
+                    break;
+            }
+
             OnSocketReady?.Invoke(socket);
         }
 
@@ -417,8 +431,77 @@ namespace AECC.Network
             if (IsServer)
                 EventManager.MaliciousScoringStorage.TryRemove(socket.Id, out _);
 
+            // ── Dispatch SocketDisconnectedEvent into the event bus ──
+            DispatchSocketDisconnectedEvent(socket);
+
             OnSocketDisconnected?.Invoke(socket);
         }
+
+        // =====================================================================
+        //  Socket lifecycle event dispatchers
+        // =====================================================================
+
+        private void DispatchSocketConnectedEvent(ISocketAdapter socket)
+        {
+            var evt = new SocketConnectedEvent
+            {
+                SocketId = socket.Id,
+                Address = socket.Address,
+                Port = socket.Port,
+                ProtocolId = (int)socket.Protocol
+            };
+
+            try
+            {
+                EventManager.Dispatch(evt);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"Failed to dispatch SocketConnectedEvent for socket {socket.Id}: {ex.Message}");
+            }
+        }
+
+        private void DispatchSocketReconnectedEvent(ISocketAdapter socket)
+        {
+            var evt = new SocketReconnectedEvent
+            {
+                SocketId = socket.Id,
+                Address = socket.Address,
+                Port = socket.Port,
+                ProtocolId = (int)socket.Protocol
+            };
+
+            try
+            {
+                EventManager.Dispatch(evt);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"Failed to dispatch SocketReconnectedEvent for socket {socket.Id}: {ex.Message}");
+            }
+        }
+
+        private void DispatchSocketDisconnectedEvent(ISocketAdapter socket)
+        {
+            var evt = new SocketDisconnectedEvent
+            {
+                SocketId = socket.Id,
+                Address = socket.Address,
+                Port = socket.Port,
+                ProtocolId = (int)socket.Protocol
+            };
+
+            try
+            {
+                EventManager.Dispatch(evt);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"Failed to dispatch SocketDisconnectedEvent for socket {socket.Id}: {ex.Message}");
+            }
+        }
+
+        // =====================================================================
 
         private NetworkDestination FindDestinationForSocket(ISocketAdapter socket)
         {
