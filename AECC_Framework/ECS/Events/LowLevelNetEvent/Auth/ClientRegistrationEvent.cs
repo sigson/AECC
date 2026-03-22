@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using AECC.Network;
 
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
 {
@@ -13,7 +14,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [NetworkScore(400)]
     [System.Serializable]
     [TypeUid(22)]
-    public class ClientRegistrationEvent : ECSEvent
+    public class ClientRegistrationEvent : NetworkEvent
     {
         public string Username = "";
         public string Password = "";

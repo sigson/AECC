@@ -14,7 +14,7 @@ using AECC.ECS.Core;
 
 namespace AECC.Network.WebSocket
 {
-    public class WSClientGodot : Node, ISocketRealization
+    public class WSClientGodot : Node, ISocketAdapter
     {
         #region Fields
         
@@ -52,10 +52,10 @@ namespace AECC.Network.WebSocket
         
         #region Events
         
-        public event Action<ISocketRealization, byte[]> DataReceived;
-        public event Action<ISocketRealization, Exception> ErrorOccurred;
-        public event Action<ISocketRealization> Connected;
-        public event Action<ISocketRealization> Disconnected;
+        public event Action<ISocketAdapter, byte[]> DataReceived;
+        public event Action<ISocketAdapter, Exception> ErrorOccurred;
+        public event Action<ISocketAdapter> Connected;
+        public event Action<ISocketAdapter> Disconnected;
         
         #endregion
         

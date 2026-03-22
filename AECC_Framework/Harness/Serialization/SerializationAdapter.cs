@@ -19,34 +19,6 @@ namespace AECC.Harness.Serialization
 {
     public class SerializationAdapter : ISerializationAdapter
     {
-
-        [System.Serializable]
-        public class SerializedEvent
-        {
-            public int TId = 0;
-            public byte[] EventData;
-            [System.NonSerialized]
-            [Newtonsoft.Json.JsonIgnore]
-            private ECSEvent cEvent;
-
-            public SerializedEvent() { }
-            public SerializedEvent(ECSEvent e)
-            {
-                cEvent = e;
-                TId = Convert.ToInt32(e.GetId());
-            }
-
-            public ECSEvent Deserialize()
-            {
-                return SerializationAdapter.DeserializeECSEvent(EventData, TId);
-            }
-
-            public byte[] Serialize()
-            {
-                EventData = SerializationAdapter.SerializeECSEvent(cEvent);
-                return SerializationAdapter.SerializeAdapterEvent(this);
-            }
-        }
         private JsonSerializer storeJsonSerializer = null;
         private JsonSerializer cacheJsonSerializer
         {
@@ -93,44 +65,6 @@ namespace AECC.Harness.Serialization
                     memoryStream.Write(entity, 0, entity.Length);
                     memoryStream.Position = 0;
                     return (SerializedEntity)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
-                }
-            }
-        }
-
-        public static byte[] SerializeAdapterEvent(SerializedEvent entity)
-        {
-            if (Defines.AOTMode)
-            {
-                return Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(entity));
-            }
-            else
-            {
-                using (var memoryStream = new MemoryStream())
-                {
-                    NetSerializer.Serializer.Default.Serialize(memoryStream, entity);
-                    return memoryStream.ToArray();
-                }
-            }
-        }
-
-        public static SerializedEvent DeserializeAdapterEvent(byte[] entity)
-        {
-            if(entity == null || entity.Length == 0)
-            {
-                NLogger.Error("Failed to deserialize empty adapter event");
-                return null;
-            }
-            if (Defines.AOTMode)
-            {
-                return JsonConvert.DeserializeObject<SerializedEvent>(Encoding.UTF8.GetString(entity));
-            }
-            else
-            {
-                using (var memoryStream = new MemoryStream())
-                {
-                    memoryStream.Write(entity, 0, entity.Length);
-                    memoryStream.Position = 0;
-                    return (SerializedEvent)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
                 }
             }
         }
@@ -208,44 +142,6 @@ namespace AECC.Harness.Serialization
                     memoryStream.Write(entity, 0, entity.Length);
                     memoryStream.Position = 0;
                     return (ECSEntity)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
-                }
-            }
-        }
-
-        public static byte[] SerializeECSEvent(ECSEvent ecsevent)
-        {
-            if (Defines.AOTMode)
-            {
-                return Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(ecsevent));
-            }
-            else
-            {
-                using (var memoryStream = new MemoryStream())
-                {
-                    NetSerializer.Serializer.Default.Serialize(memoryStream, ecsevent);
-                    return memoryStream.ToArray();
-                }
-            }
-        }
-
-        public static ECSEvent DeserializeECSEvent(byte[] ecsevent, long typeId)
-        {
-            if(ecsevent == null || ecsevent.Length == 0)
-            {
-                NLogger.Error("Failed to deserialize empty ECSEvent");
-                return null;
-            }
-            if (Defines.AOTMode)
-            {
-                return (ECSEvent)JsonConvert.DeserializeObject(Encoding.UTF8.GetString(ecsevent), EntitySerializer.TypeStorage[typeId]);
-            }
-            else
-            {
-                using (var memoryStream = new MemoryStream())
-                {
-                    memoryStream.Write(ecsevent, 0, ecsevent.Length);
-                    memoryStream.Position = 0;
-                    return (ECSEvent)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
                 }
             }
         }

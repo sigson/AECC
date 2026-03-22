@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using AECC.Network;
 
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
 {
@@ -14,7 +15,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [NetworkScore(0)]
     [System.Serializable]
     [TypeUid(26)]
-    public class AuthActionFailedEvent : ECSEvent
+    public class AuthActionFailedEvent : NetworkEvent
     {
         public int EventId = 0;
         public string Reason = "";

@@ -6,6 +6,7 @@ using System.Reflection;
 using MessagePack;
 using AECC.Core.Logging;
 using AECC.Extensions;
+using AECC.Core;
 
 namespace AECC.Network
 {
@@ -18,23 +19,23 @@ namespace AECC.Network
     /// This ID is used as the discriminator in the wire envelope.
     /// IDs must be globally unique across all event types.
     /// </summary>
-    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
-    public class NetworkEventIdAttribute : Attribute
-    {
-        public int TypeId { get; }
-        public NetworkEventIdAttribute(int typeId) { TypeId = typeId; }
-    }
+    // [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    // public class NetworkEventIdAttribute : Attribute
+    // {
+    //     public int Id { get; }
+    //     public NetworkEventIdAttribute(int typeId) { Id = typeId; }
+    // }
 
     /// <summary>
     /// Assign a network abuse score to an event type.
     /// Used for malicious traffic detection.
     /// </summary>
-    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
-    public class NetworkScoreAttribute : Attribute
-    {
-        public int Score { get; }
-        public NetworkScoreAttribute(int score) { Score = score; }
-    }
+    // [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    // public class NetworkScoreAttribute : Attribute
+    // {
+    //     public int Score { get; }
+    //     public NetworkScoreAttribute(int score) { Score = score; }
+    // }
 
     // =========================================================================
     //  NetworkEvent base class — NOT annotated with [MessagePackObject]
@@ -225,21 +226,21 @@ namespace AECC.Network
                         if (type.IsAbstract || !baseType.IsAssignableFrom(type))
                             continue;
 
-                        var attr = type.GetCustomAttribute<NetworkEventIdAttribute>();
+                        var attr = type.GetCustomAttribute<TypeUidAttribute>();
                         if (attr == null)
                         {
                             NLogger.LogError($"NetworkEvent subclass {type.FullName} is missing [NetworkEventId] attribute — it will not be serializable.");
                             continue;
                         }
 
-                        if (_idToType.TryGetValue(attr.TypeId, out var existing))
+                        if (_idToType.TryGetValue(attr.Id, out var existing))
                         {
-                            NLogger.LogError($"NetworkEventId collision: {type.FullName} and {existing.FullName} both use TypeId={attr.TypeId}");
+                            NLogger.LogError($"NetworkEventId collision: {type.FullName} and {existing.FullName} both use TypeId={attr.Id}");
                             continue;
                         }
 
-                        _idToType[attr.TypeId] = type;
-                        _typeToId[type] = attr.TypeId;
+                        _idToType[attr.Id] = type;
+                        _typeToId[type] = attr.Id;
                     }
                 }
 

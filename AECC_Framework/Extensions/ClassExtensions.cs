@@ -150,21 +150,21 @@ namespace AECC.Extensions
     }
     
 #else
-    public static class ManagerSpace
-    {
-        #region Instantiate
-        public static EngineApiObjectBehaviour InstantiatedProcess(EngineApiObjectBehaviour instantiated, IEntityManager entityManagerOwner = null)
-        {
-            if (entityManagerOwner != null)
-            {
-                if (instantiated is EngineApiObjectBehaviour)
-                {
-                    (instantiated as EngineApiObjectBehaviour).GetComponentsInChildren<IManagable>().ForEach(x => (x as IManagable).ownerManagerSpace = entityManagerOwner);
-                }
-            }
-            return instantiated;
-        }
-        #endregion
-    }
+    // public static class ManagerSpace
+    // {
+    //     #region Instantiate
+    //     public static EngineApiObjectBehaviour InstantiatedProcess(EngineApiObjectBehaviour instantiated, IEntityManager entityManagerOwner = null)
+    //     {
+    //         if (entityManagerOwner != null)
+    //         {
+    //             if (instantiated is EngineApiObjectBehaviour)
+    //             {
+    //                 (instantiated as EngineApiObjectBehaviour).GetComponentsInChildren<IManagable>().ForEach(x => (x as IManagable).ownerManagerSpace = entityManagerOwner);
+    //             }
+    //         }
+    //         return instantiated;
+    //     }
+    //     #endregion
+    // }
 #endif
 }

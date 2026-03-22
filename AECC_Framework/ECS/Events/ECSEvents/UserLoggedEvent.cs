@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using AECC.Network;
 
 namespace AECC.ECS.DefaultObjects.Events.ECSEvents
 {
@@ -14,7 +15,7 @@ namespace AECC.ECS.DefaultObjects.Events.ECSEvents
     [NetworkScore(0)]
     [System.Serializable]
     [TypeUid(25)]
-    public class UserLoggedEvent : ECSEvent
+    public class UserLoggedEvent : NetworkEvent
     {
         static public new long Id { get; set; } = 25;
         [System.NonSerialized]
@@ -31,8 +32,8 @@ namespace AECC.ECS.DefaultObjects.Events.ECSEvents
             actionAfterLoggin(this);
             if(GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Client)
             {
-                NetworkingService.instance.PlayerEntityId = userEntityId;
-                NetworkingService.instance.Username = Username;
+                GlobalProgramState.instance.PlayerEntityId = userEntityId;
+                GlobalProgramState.instance.Username = Username;
             }
         }
     }

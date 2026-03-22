@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using AECC.Network;
 
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
 {
@@ -13,7 +14,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
     [NetworkScore(100)]
     [System.Serializable]
     [TypeUid(19)]
-    public class ConfigCheckEvent : ECSEvent
+    public class ConfigCheckEvent : NetworkEvent
     {
         static public new long Id { get; set; } = 19;
         public long configHash;

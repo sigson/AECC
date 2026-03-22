@@ -2,6 +2,7 @@
 using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
 using AECC.Harness.Model;
+using AECC.Network;
 using AECC.Network.NetworkModels;
 using System;
 using System.Collections.Concurrent;
@@ -108,7 +109,7 @@ namespace AECC.Harness.Services
 
     public class ScoreObject
     {
-        public ISocketRealization SocketAdapter { get => Lambda.LineFunction(() => NetworkingService.instance.SocketAdapters[this.SocketId]); }
+        public ISocketAdapter SocketAdapter { get => Lambda.LineFunction(() => NetworkingService.instance.SocketAdapters[this.SocketId]); }
         public long SocketId;
         private int score = 0;
         public int Score

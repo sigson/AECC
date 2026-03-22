@@ -32,6 +32,9 @@ namespace AECC.Harness.Services
         public string persistentDataPath;
         public string streamingAssetsPath;
 
+        public long PlayerEntityId;
+        public string Username;
+
         public string GameConfigDir
         {
             get

@@ -5,7 +5,7 @@ using AECC.ECS.DefaultObjects.Events.ECSEvents;
 using AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth;
 using AECC.Extensions;
 using AECC.Harness.Model;
-using AECC.Network.NetworkModels;
+using AECC.Network;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -37,8 +37,8 @@ namespace AECC.Harness.Services
                 return cacheInstance;
             }
         }
-        public ConcurrentDictionary<ISocketRealization, ECSEntity> SocketToEntity = new ConcurrentDictionary<ISocketRealization, ECSEntity>();
-        public ConcurrentDictionary<ECSEntity, ISocketRealization> EntityToSocket = new ConcurrentDictionary<ECSEntity, ISocketRealization>();
+        public ConcurrentDictionary<ISocketAdapter, ECSEntity> SocketToEntity = new ConcurrentDictionary<ISocketAdapter, ECSEntity>();
+        public ConcurrentDictionary<ECSEntity, ISocketAdapter> EntityToSocket = new ConcurrentDictionary<ECSEntity, ISocketAdapter>();
 
         public void AuthProcess(ClientAuthEvent clientAuthEvent)
         {
@@ -56,7 +56,7 @@ namespace AECC.Harness.Services
             }
             else
             {
-                clientAuthEvent.SocketSource.Send(new AuthActionFailedEvent()
+                NetworkService.instance.EventManager.Dispatch(new AuthActionFailedEvent()
                 {
                     Reason = "Wrong username or password"
                 });
@@ -87,7 +87,7 @@ namespace AECC.Harness.Services
             }
         }
 
-        private void AuthorizationProcess(UserDataRowBase userData, ISocketRealization socketAdapter)
+        private void AuthorizationProcess(UserDataRowBase userData, ISocketAdapter socketAdapter)
         {
             var entity = SocketToEntity.Values.Where(x => x.GetComponent<UsernameComponent>().Username == userData.Username).FirstOrDefault();
             var userLogged = new UserLoggedEvent();
@@ -120,7 +120,7 @@ namespace AECC.Harness.Services
             userLogged.Username = userData.Username;
             userLogged.userEntity = entity;
             userLogged.userEntityId = entity.instanceId;
-            ECSService.instance.eventManager.OnEventAdd(userLogged);
+            NetworkService.instance.EventManager.Dispatch(userLogged);
         }
 
         public override void InitializeProcess()

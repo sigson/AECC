@@ -1,5 +1,5 @@
 ﻿using AECC.Core;
-using AECC.Network.NetworkModels;
+using AECC.Network;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,6 +15,6 @@ namespace AECC.ECS.DefaultObjects.ECSComponents
         static public new long Id { get; set; }
         static public new System.Collections.Generic.List<System.Action> StaticOnChangeHandlers { get; set; }
         [System.NonSerialized]
-        public ISocketRealization Socket;
+        public ISocketAdapter Socket;
     }
 }

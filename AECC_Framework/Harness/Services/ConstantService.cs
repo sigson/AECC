@@ -13,10 +13,10 @@ using AECC.Harness.Model;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.IO;
-using static AECC.Harness.Services.NetworkingService;
 using AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent;
 using static FileAdapter;
 using AECC.Collections;
+using AECC.Network;
 
 namespace AECC.Harness.Services
 {
@@ -477,17 +477,17 @@ namespace AECC.Harness.Services
                 (step) => {  },
                 (step) => { InitializeProcess(); },
                 (step) => {
-                    if (NetworkingService.instance != null)
+                    if (NetworkService.instance != null)
                     {
                         this.FreezeCurrentService(() => {
-                            Action<Network.NetworkModels.ISocketRealization> socketAction = (Network.NetworkModels.ISocketRealization socketAdapter) =>
+                            Action<ISocketAdapter> socketAction = (ISocketAdapter socketAdapter) =>
                             {
-                                ECSService.instance.eventManager.OnEventAdd(new ConfigCheckEvent()
+                                NetworkService.instance.EventManager.Dispatch(new ConfigCheckEvent()
                                     {
                                         configHash = hashConfig
                                     });
                             };
-                            if (NetworkingService.instance.SocketAdapters.Count() == 0)
+                            if (NetworkService.instance.ClientSockets.Count() == 0)
                             {
                                 NetworkingService.instance.OnConnectExternal += new SocketHandler(socketAction);
 
