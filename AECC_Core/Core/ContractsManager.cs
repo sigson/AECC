@@ -183,11 +183,13 @@ namespace AECC.Core
         {
             ComponentOwners.TryGetValue(component.GetId(), out var hentities);
             racecheckagain:
+            bool added = false;
             if(entity.HasComponent(component.GetId()) || entity.entityComponents.HasComponentAsync(component.GetId()).Result)
             {
                 hentities.AddI(entity, entity);
+                added = true;
             }
-            if(!entity.HasComponent(component.GetId()) && !entity.entityComponents.HasComponentAsync(component.GetId()).Result)
+            if(added && !entity.HasComponent(component.GetId()) && !entity.entityComponents.HasComponentAsync(component.GetId()).Result)
             {
                 hentities.RemoveI(entity, entity);
                 goto racecheckagain;
@@ -254,11 +256,13 @@ namespace AECC.Core
         {
             ComponentOwners.TryGetValue(component.GetId(), out var hentities);
             racecheckagain:
+            bool added = false;
             if(!entity.HasComponent(component.GetId()) && !entity.entityComponents.HasComponentAsync(component.GetId()).Result)
             {
                 hentities.RemoveI(entity, entity);
+                added = true;
             }
-            if(entity.HasComponent(component.GetId()) || entity.entityComponents.HasComponentAsync(component.GetId()).Result)
+            if(added && entity.HasComponent(component.GetId()) || entity.entityComponents.HasComponentAsync(component.GetId()).Result)
             {
                 hentities.AddI(entity, entity);
                 goto racecheckagain;
