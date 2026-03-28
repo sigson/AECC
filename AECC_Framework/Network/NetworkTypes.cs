@@ -77,20 +77,24 @@ namespace AECC.Network
     }
 
     /// <summary>
-    /// Describes where a network event should be sent.
-    /// If SocketId != 0, the event is routed by socket ID (server-side pattern).
-    /// Otherwise Host/Port/Protocol are used to identify the target — and if no
-    /// connection to that target exists yet, one is created on-the-fly.
+    /// Unified network endpoint descriptor. Used both as a send destination
+    /// (routing events to a specific socket or host:port) and as an endpoint
+    /// configuration (defining listeners and client connections at startup).
     ///
-    /// NetworkDestination is interchangeable with NetworkEndpointConfig:
-    /// any destination can be promoted to a full config for auto-connect,
-    /// and any config can be narrowed to a destination for sending.
+    /// Routing modes:
+    ///   - SocketId != 0 → routed by socket ID (server-side pattern).
+    ///   - Otherwise Host/Port/Protocol identify the target; if no connection
+    ///     exists yet, one is created on-the-fly.
+    ///
+    /// Instances are cached on ISocketAdapter.CachedDestination to avoid
+    /// repeated allocation. When you receive a NetworkEvent from a socket,
+    /// use socket.CachedDestination to build a reply destination with zero allocs.
     /// </summary>
     public class NetworkDestination
     {
-        public string Host;
-        public int Port;
-        public NetworkProtocol Protocol;
+        public string Host = "127.0.0.1";
+        public int Port = 6667;
+        public NetworkProtocol Protocol = NetworkProtocol.TCP;
 
         /// <summary>
         /// When non-zero, routes the packet by socket ID instead of Host/Port.
@@ -98,13 +102,20 @@ namespace AECC.Network
         /// </summary>
         public long SocketId;
 
-        public bool IsSocketRouted => SocketId != 0;
-
-        // ── Optional fields used when auto-creating a connection ──
+        /// <summary>
+        /// true = start a server/listener on this endpoint.
+        /// false = connect as a client / use as a send destination.
+        /// Only meaningful during initialization; ignored at send time.
+        /// </summary>
+        public bool IsListener;
 
         public int BufferSize = 65536;
+
+        // --- SSL/TLS (for WSS / HTTPS) ---
         public string CertificatePath;
         public string CertificatePassword;
+
+        public bool IsSocketRouted => SocketId != 0;
 
         /// <summary>
         /// The routing key used to look up / store client sockets.
@@ -112,12 +123,12 @@ namespace AECC.Network
         public (NetworkProtocol, string, int) RouteKey => (Protocol, Host, Port);
 
         /// <summary>
-        /// Promote this destination to a full endpoint config for auto-connect.
-        /// Always creates a client (IsListener = false).
+        /// Create a client (non-listener) destination by copying connection fields.
+        /// Useful when you need a clean send-only copy from a listener config.
         /// </summary>
-        public NetworkEndpointConfig ToEndpointConfig()
+        public NetworkDestination ToClientDestination()
         {
-            return new NetworkEndpointConfig
+            return new NetworkDestination
             {
                 Host = Host,
                 Port = Port,
@@ -130,56 +141,25 @@ namespace AECC.Network
         }
 
         /// <summary>
-        /// Create a destination from an endpoint config.
+        /// Create a socket-routed destination targeting a specific socket ID.
         /// </summary>
-        public static NetworkDestination FromConfig(NetworkEndpointConfig config)
+        public static NetworkDestination ForSocket(long socketId)
+        {
+            return new NetworkDestination { SocketId = socketId };
+        }
+
+        /// <summary>
+        /// Create a host-routed destination.
+        /// </summary>
+        public static NetworkDestination ForHost(string host, int port, NetworkProtocol protocol)
         {
             return new NetworkDestination
             {
-                Host = config.Host,
-                Port = config.Port,
-                Protocol = config.Protocol,
-                BufferSize = config.BufferSize,
-                CertificatePath = config.CertificatePath,
-                CertificatePassword = config.CertificatePassword
+                Host = host,
+                Port = port,
+                Protocol = protocol,
+                IsListener = false
             };
         }
-    }
-
-    /// <summary>
-    /// Configuration entry for initializing a network endpoint (listener or connector).
-    /// NetworkService expects a List of these to set up all required protocols.
-    /// Interchangeable with NetworkDestination for client connections.
-    /// </summary>
-    public class NetworkEndpointConfig
-    {
-        public string Host = "127.0.0.1";
-        public int Port = 6667;
-        public NetworkProtocol Protocol = NetworkProtocol.TCP;
-
-        /// <summary>
-        /// true = start a server/listener on this endpoint.
-        /// false = connect as a client to this endpoint.
-        /// </summary>
-        public bool IsListener;
-
-        public int BufferSize = 65536;
-
-        // --- SSL/TLS (for WSS / HTTPS) ---
-        public string CertificatePath;
-        public string CertificatePassword;
-
-        /// <summary>
-        /// Narrow this config to a destination for sending events.
-        /// </summary>
-        public NetworkDestination ToDestination()
-        {
-            return NetworkDestination.FromConfig(this);
-        }
-
-        /// <summary>
-        /// The routing key used to look up / store client sockets.
-        /// </summary>
-        public (NetworkProtocol, string, int) RouteKey => (Protocol, Host, Port);
     }
 }

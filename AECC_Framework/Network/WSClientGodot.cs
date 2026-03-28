@@ -87,6 +87,7 @@ namespace AECC.Network
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         #endregion
 

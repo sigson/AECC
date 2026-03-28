@@ -121,7 +121,7 @@ namespace AECC.Harness.Services
             userLogged.Username = userData.Username;
             userLogged.userEntity = entity;
             userLogged.userEntityId = entity.instanceId;
-            userLogged.SocketSourceId = socketAdapter.Id;
+            userLogged.Destination = socketAdapter.CachedDestination;
             NetworkService.instance.EventManager.Dispatch(userLogged);
         }
 

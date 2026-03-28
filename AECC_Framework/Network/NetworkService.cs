@@ -41,10 +41,11 @@ namespace AECC.Network
         // =====================================================================
 
         /// <summary>
-        /// List of endpoint configs describing which protocols to start.
+        /// List of endpoint destinations describing which protocols to start.
         /// Populate this before the service initialization step runs.
+        /// Use IsListener = true for server endpoints, false for client connections.
         /// </summary>
-        public List<NetworkEndpointConfig> EndpointConfigs = new();
+        public List<NetworkDestination> EndpointConfigs = new();
 
         /// <summary>
         /// True if this process acts as a server for at least one endpoint.
@@ -88,7 +89,7 @@ namespace AECC.Network
         /// <summary>
         /// Tracks which destinations have had connections auto-created.
         /// </summary>
-        private ConcurrentDictionary<(NetworkProtocol, string, int), NetworkEndpointConfig> _autoCreatedConfigs = new();
+        private ConcurrentDictionary<(NetworkProtocol, string, int), NetworkDestination> _autoCreatedConfigs = new();
 
         /// <summary>
         /// Ping service — periodic latency measurement for all confirmed sockets.
@@ -181,7 +182,7 @@ namespace AECC.Network
         //  Listener (Server) startup
         // =====================================================================
 
-        private void StartListener(NetworkEndpointConfig config)
+        private void StartListener(NetworkDestination config)
         {
             // ── Godot protocols are client-only ──
             if (ProtocolTraits.IsGodotProtocol(config.Protocol))
@@ -243,7 +244,7 @@ namespace AECC.Network
         //  Client startup (explicit + on-demand)
         // =====================================================================
 
-        private void StartClient(NetworkEndpointConfig config)
+        private void StartClient(NetworkDestination config)
         {
             var key = config.RouteKey;
 
@@ -312,13 +313,14 @@ namespace AECC.Network
         ///   var ws = new WSClientGodot();
         ///   AddChild(ws);
         ///   ws.InitializeClient("example.com", 443, protocol: NetworkProtocol.WebSocketSecureGodot);
-        ///   NetworkService.instance.RegisterExternalClient(ws, config);
+        ///   var dest = NetworkDestination.ForHost("example.com", 443, NetworkProtocol.WebSocketSecureGodot);
+        ///   NetworkService.instance.RegisterExternalClient(ws, dest);
         ///   ws.Connect();
         /// </summary>
         /// <param name="client">Pre-created socket adapter.</param>
-        /// <param name="config">Endpoint configuration describing this connection.</param>
+        /// <param name="config">Destination describing this connection (IsListener must be false).</param>
         /// <param name="autoConnect">If true, calls client.Connect() after registration.</param>
-        public void RegisterExternalClient(ISocketAdapter client, NetworkEndpointConfig config, bool autoConnect = false)
+        public void RegisterExternalClient(ISocketAdapter client, NetworkDestination config, bool autoConnect = false)
         {
             if (config.IsListener)
                 throw new ArgumentException("Cannot register a client socket with IsListener = true");
@@ -343,10 +345,14 @@ namespace AECC.Network
         /// <summary>
         /// Wire up a client socket's events and register it in ClientSockets.
         /// Shared by StartClient and RegisterExternalClient.
+        /// Also caches the NetworkDestination on the socket for zero-alloc reply routing.
         /// </summary>
-        private void WireClientEvents(ISocketAdapter client, NetworkEndpointConfig config,
+        private void WireClientEvents(ISocketAdapter client, NetworkDestination config,
             (NetworkProtocol, string, int) key)
         {
+            // Cache the destination on the socket for reply routing
+            client.CachedDestination = config.IsListener ? config.ToClientDestination() : config;
+
             client.Connected += OnTransportClientSelfConnected;
             client.Disconnected += (s) => OnTransportClientSelfDisconnected(s, config);
             client.DataReceived += OnRawDataReceived;
@@ -375,13 +381,14 @@ namespace AECC.Network
                 return;
             }
 
-            var config = dest.ToEndpointConfig();
-            var key = config.RouteKey;
+            var key = dest.RouteKey;
 
-            _autoCreatedConfigs[key] = config;
+            // Ensure we use a non-listener config for the client
+            var clientDest = dest.IsListener ? dest.ToClientDestination() : dest;
+            _autoCreatedConfigs[key] = clientDest;
 
-            NLogger.LogNetwork($"Auto-creating connection: {config.Protocol} to {config.Host}:{config.Port}");
-            StartClient(config);
+            NLogger.LogNetwork($"Auto-creating connection: {clientDest.Protocol} to {clientDest.Host}:{clientDest.Port}");
+            StartClient(clientDest);
         }
 
         // =====================================================================
@@ -435,15 +442,14 @@ namespace AECC.Network
             }
         }
 
-        private void OnTransportClientSelfDisconnected(ISocketAdapter socket, NetworkEndpointConfig config)
+        private void OnTransportClientSelfDisconnected(ISocketAdapter socket, NetworkDestination config)
         {
             _accumulators.TryRemove(socket, out _);
 
             if (_rpcBridges.TryRemove(socket, out var bridge))
                 bridge.Dispose();
 
-            var dest = config.ToDestination();
-            OutboundBuffer.OnSocketDisconnected(socket, dest);
+            OutboundBuffer.OnSocketDisconnected(socket, config);
 
             // ── Dispatch SocketDisconnectedEvent into the event bus ──
             DispatchSocketDisconnectedEvent(socket);
@@ -480,6 +486,34 @@ namespace AECC.Network
             if (socket.Id != 0)
                 SocketsById[socket.Id] = socket;
 
+            // ── Cache destination on the socket for zero-alloc reply routing ──
+            if (socket.CachedDestination == null)
+            {
+                // Server-side sessions: route by socket ID
+                if (socket.Id != 0)
+                {
+                    socket.CachedDestination = NetworkDestination.ForSocket(socket.Id);
+                }
+                else
+                {
+                    // Fallback: look up from ClientSockets
+                    foreach (var kvp in ClientSockets)
+                    {
+                        if (kvp.Value == socket)
+                        {
+                            socket.CachedDestination = NetworkDestination.ForHost(
+                                kvp.Key.Item2, kvp.Key.Item3, kvp.Key.Item1);
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (IsServer && socket.Id != 0 && !socket.CachedDestination.IsSocketRouted)
+            {
+                // Server-side: upgrade to socket-routed destination now that we have the ID
+                socket.CachedDestination = NetworkDestination.ForSocket(socket.Id);
+            }
+
             // RPC bridge: skip for Godot protocols (StreamJsonRpc uses System.IO.Pipelines
             // which requires async threading — incompatible with single-threaded Godot web)
             if (!ProtocolTraits.IsGodotProtocol(socket.Protocol))
@@ -492,8 +526,7 @@ namespace AECC.Network
             if (IsServer)
                 EventManager.MaliciousScoringStorage[socket.Id] = new ScoreObject { SocketId = socket.Id };
 
-            NetworkDestination dest = FindDestinationForSocket(socket);
-            OutboundBuffer.OnSocketReady(socket, dest);
+            OutboundBuffer.OnSocketReady(socket, socket.CachedDestination);
 
             // ── Dispatch lifecycle event into the event bus ──
             switch (reason)
@@ -583,29 +616,6 @@ namespace AECC.Network
             {
                 NLogger.LogError($"Failed to dispatch SocketDisconnectedEvent for socket {socket.Id}: {ex.Message}");
             }
-        }
-
-        // =====================================================================
-
-        private NetworkDestination FindDestinationForSocket(ISocketAdapter socket)
-        {
-            foreach (var kvp in ClientSockets)
-            {
-                if (kvp.Value == socket)
-                {
-                    return new NetworkDestination
-                    {
-                        Protocol = kvp.Key.Item1,
-                        Host = kvp.Key.Item2,
-                        Port = kvp.Key.Item3
-                    };
-                }
-            }
-
-            if (socket.Id != 0)
-                return new NetworkDestination { SocketId = socket.Id };
-
-            return null;
         }
 
         // =====================================================================
@@ -802,7 +812,7 @@ namespace AECC.Network
         //  Helpers
         // =====================================================================
 
-        private static SslContext CreateSslContext(NetworkEndpointConfig config)
+        private static SslContext CreateSslContext(NetworkDestination config)
         {
             if (string.IsNullOrEmpty(config.CertificatePath))
                 throw new InvalidOperationException($"SSL certificate required for {config.Protocol}");

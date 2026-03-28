@@ -24,6 +24,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -119,6 +120,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -230,6 +232,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -296,6 +299,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -388,6 +392,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -452,6 +457,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -544,6 +550,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -608,6 +615,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;
@@ -711,6 +719,7 @@ namespace AECC.Network.Adapters
         public int LatencyMs { get; set; } = -1;
         public long LastPingTicks { get; set; }
         public long PingSentTicks { get; set; }
+        public NetworkDestination CachedDestination { get; set; }
 
         public event Action<ISocketAdapter, byte[]> DataReceived;
         public event Action<ISocketAdapter> Connected;

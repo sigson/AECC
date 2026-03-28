@@ -41,6 +41,20 @@ namespace AECC.Network
         /// </summary>
         long PingSentTicks { get; set; }
 
+        // ── Cached destination ──
+
+        /// <summary>
+        /// Cached NetworkDestination for this socket, populated once the socket
+        /// is fully identified/ready. Allows zero-allocation reply routing:
+        /// when receiving a NetworkEvent, use SocketSource.CachedDestination
+        /// as the Destination for the reply event.
+        ///
+        /// For server-side sessions: SocketId-routed destination.
+        /// For client sockets: Host/Port/Protocol-routed destination.
+        /// Null until the identity handshake completes.
+        /// </summary>
+        NetworkDestination CachedDestination { get; set; }
+
         // ── Transport ──
 
         /// <summary>
