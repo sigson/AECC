@@ -9,11 +9,11 @@
 
   <ItemGroup>
     <PackageReference Include="MessagePack" Version="3.1.4" />
-    <PackageReference Include="NetCoreServer" Version="8.0.7" />
     <PackageReference Include="StreamJsonRpc" Version="2.24.84" />
     <PackageReference Include="System.IO.Pipelines" Version="10.0.5" />
     <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
     <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
+    <ProjectReference Include="..\AECC_Packages\AECC_Packages.csproj" />
 	<PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
