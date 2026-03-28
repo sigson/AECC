@@ -303,6 +303,18 @@ public static class EnumerableExtension
         }
     }
 
+    public static void Clear<T>(this System.Collections.Concurrent.ConcurrentQueue<T> queue)
+    {
+        if (queue == null)
+            return;
+
+        // Извлекаем элементы, пока очередь не станет пустой
+        while (queue.TryDequeue(out _))
+        {
+            // Ничего не делаем, просто выбрасываем элемент
+        }
+    }
+
     public static IEnumerable<TResult> Cast<TSource, TResult>(this IEnumerable<TSource> source, Func<TSource, TResult> converter)
     {
         if (source == null) return Enumerable.Empty<TResult>();
