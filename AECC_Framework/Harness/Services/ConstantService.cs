@@ -480,22 +480,27 @@ namespace AECC.Harness.Services
                     if (NetworkService.instance != null)
                     {
                         this.FreezeCurrentService(() => {
-                            Action<ISocketAdapter> socketAction = (ISocketAdapter socketAdapter) =>
+                            if (GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Client)
                             {
                                 NetworkService.instance.EventManager.Dispatch(new ConfigCheckEvent()
-                                    {
-                                        configHash = hashConfig
-                                    });
-                            };
-                            if (NetworkService.instance.ClientSockets.Count() == 0)
-                            {
-                                NetworkingService.instance.OnConnectExternal += new SocketHandler(socketAction);
+                                {
+                                    configHash = hashConfig,
+                                    Destination = GlobalProgramState.instance.ClientNetworkGameDestination
+                                });
+                            }
+                            // Action<ISocketAdapter> socketAction = (ISocketAdapter socketAdapter) =>
+                            // {
+                                
+                            // };
+                            // if (NetworkService.instance.ClientSockets.Count() == 0)
+                            // {
+                            //     NetworkingService.instance.OnConnectExternal += new SocketHandler(socketAction);
 
-                            }
-                            else
-                            {
-                                socketAction(NetworkingService.instance.ClientSocket);
-                            }
+                            // }
+                            // else
+                            // {
+                            //     socketAction(NetworkingService.instance.ClientSocket);
+                            // }
 							if (GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Server || GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Offline )
                                 this.UnfreezeCurrentService();
                         });
@@ -511,9 +516,9 @@ namespace AECC.Harness.Services
             {
                 //await for ecs initalization
             }, 0);
-            if (NetworkingService.instance != null)
+            if (NetworkService.instance != null)
             {
-                this.RegisterCallbackUnsafe(NetworkingService.instance.GetSGTId(), 1, (d) => { return true; }, () =>
+                this.RegisterCallbackUnsafe(NetworkService.instance.GetSGTId(), 1, (d) => { return true; }, () =>
                 {
                     //await for network initalization
                 }, 1);

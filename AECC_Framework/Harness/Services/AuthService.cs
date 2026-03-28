@@ -58,7 +58,8 @@ namespace AECC.Harness.Services
             {
                 NetworkService.instance.EventManager.Dispatch(new AuthActionFailedEvent()
                 {
-                    Reason = "Wrong username or password"
+                    Reason = "Wrong username or password",
+                    Destination = clientAuthEvent.Destination
                 });
             }
         }
@@ -120,6 +121,7 @@ namespace AECC.Harness.Services
             userLogged.Username = userData.Username;
             userLogged.userEntity = entity;
             userLogged.userEntityId = entity.instanceId;
+            userLogged.SocketSourceId = socketAdapter.Id;
             NetworkService.instance.EventManager.Dispatch(userLogged);
         }
 

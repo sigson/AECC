@@ -1,4 +1,5 @@
 ﻿using AECC.Harness.Model;
+using AECC.Network;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -147,6 +148,8 @@ namespace AECC.Harness.Services
             Client,
             Offline
         }
+
+        public NetworkDestination ClientNetworkGameDestination;
 
         public override void InitializeProcess()
         {

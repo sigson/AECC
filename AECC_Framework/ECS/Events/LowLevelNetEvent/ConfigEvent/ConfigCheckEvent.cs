@@ -27,15 +27,17 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
                 {
                     newconfig = ConstantService.instance.ConfigFilesZip.ToArray();
                 }
-                NetworkingService.instance.Send(this.SocketSource, new ConfigCheckResultEvent()
+                NetworkService.instance.EventManager.Dispatch(new ConfigCheckResultEvent()
                 {
                     NewConfig = newconfig,
-                    configHash = ConstantService.instance.hashConfigFilesZip
-                }.GetNetworkPacket());
+                    configHash = ConstantService.instance.hashConfigFilesZip,
+                    Destination = this.Destination
+                });
+                //NetworkingService.instance.Send(this.SocketSource, .GetNetworkPacket());
             }
             if (GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Client)
             {
-                NetworkingService.instance.Send(NetworkingService.instance.ClientSocket, this.GetNetworkPacket());
+                ///NetworkingService.instance.Send(NetworkingService.instance.ClientSocket, this.GetNetworkPacket());
             }
         }
     }

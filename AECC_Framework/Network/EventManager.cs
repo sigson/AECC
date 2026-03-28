@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 using AECC.Core.Logging;
+using AECC.ECS.Core;
 
 namespace AECC.Network
 {
@@ -49,7 +50,7 @@ namespace AECC.Network
                 {
                     try
                     {
-                        var attr = evt.GetType().GetCustomAttribute<NetworkScoreAttribute>();
+                        var attr = evt.GetType().GetCustomAttribute<NetworkScore>();
                         int baseScore = attr?.Score ?? 0;
                         scoreObj.Score += baseScore + evt.NetworkScoreBooster();
                     }

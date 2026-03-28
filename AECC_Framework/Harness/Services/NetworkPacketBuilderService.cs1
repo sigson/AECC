@@ -10,6 +10,7 @@ using System.IO;
 using AECC.Extensions;
 using AECC.Core.Logging;
 using AECC.Collections;
+using AECC.Network;
 
 namespace AECC.Harness.Services
 {
@@ -37,7 +38,7 @@ namespace AECC.Harness.Services
 
         public (byte[], bool) UnpackNetworkPacket(byte[] packetBuffer)
         {
-            var networkBufferSize = NetworkingService.instance.BufferSize;
+            var networkBufferSize = 1024;//NetworkingService.instance.BufferSize;
             int headerSize = 8 * 3;
             //for (int i = 0; i < packetBuffer.Length / networkBufferSize; i++)
             //{
@@ -134,7 +135,7 @@ namespace AECC.Harness.Services
             List<byte> result = new List<byte>();
             long headerSize = 8L * 3L;
             var hashCode = Guid.NewGuid().GuidToLong();
-            var networkBufferSize = NetworkingService.instance.BufferSize;
+            var networkBufferSize = 1024;//NetworkService.instance.bu;
 
             if (networkBufferSize >= buffer.Count + headerSize)
             {

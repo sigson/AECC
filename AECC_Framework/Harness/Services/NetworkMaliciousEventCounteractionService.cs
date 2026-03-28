@@ -3,7 +3,6 @@ using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
 using AECC.Harness.Model;
 using AECC.Network;
-using AECC.Network.NetworkModels;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -109,7 +108,7 @@ namespace AECC.Harness.Services
 
     public class ScoreObject
     {
-        public ISocketAdapter SocketAdapter { get => Lambda.LineFunction(() => NetworkingService.instance.SocketAdapters[this.SocketId]); }
+        public ISocketAdapter SocketAdapter { get => Lambda.LineFunction(() => NetworkService.instance.SocketsById[this.SocketId]); }
         public long SocketId;
         private int score = 0;
         public int Score
@@ -121,7 +120,7 @@ namespace AECC.Harness.Services
                 if(score >= NetworkMaliciousEventCounteractionService.instance.MaxNetworkMaliciousScore)
                 {
                     NetworkMaliciousEventCounteractionService.instance.UnwantedSocketInfo[SocketAdapter.Address] = DateTime.Now.AddSeconds(NetworkMaliciousEventCounteractionService.instance.MaliciousIPTimeoutInSeconds).Ticks;
-                    SocketAdapter.DisconnectAsync();
+                    SocketAdapter.Disconnect();
                 }
             }
         }
