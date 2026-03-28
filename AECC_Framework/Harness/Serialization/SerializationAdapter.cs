@@ -64,7 +64,9 @@ namespace AECC.Harness.Serialization
                 {
                     memoryStream.Write(entity, 0, entity.Length);
                     memoryStream.Position = 0;
-                    return (SerializedEntity)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
+                    var adapterEntity = (SerializedEntity)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
+                    adapterEntity.adapter = this;
+                    return adapterEntity;
                 }
             }
         }
@@ -144,6 +146,11 @@ namespace AECC.Harness.Serialization
                     return (ECSEntity)ReflectionCopy.MakeReverseShallowCopy(NetSerializer.Serializer.Default.Deserialize(memoryStream));
                 }
             }
+        }
+
+        public void InitializeAdapterCache(IEnumerable<Type> types)
+        {
+            NetSerializer.Serializer.Default = new NetSerializer.Serializer(types);
         }
     }
 }

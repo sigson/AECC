@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="3.1.4" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="StreamJsonRpc" Version="2.24.84" />
+    <PackageReference Include="System.IO.Pipelines" Version="10.0.5" />
+    <PackageReference Include="DefaultEcs" Version="0.17.2" />
+    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.3" />
+    <PackageReference Include="Microsoft.VisualStudio.Threading" Version="17.14.15" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+    <PackageReference Include="NetCoreServer" Version="8.0.7" />
+  </ItemGroup>
+
+  <!-- Reference the AECC framework projects.
+       Adjust relative paths to match your solution layout, e.g.:
+         AECCTest/
+           TestShared/
+           TestServer/
+           TestClient/
+         AECC_Core/
+         AECC_CoreFramework/
+         AECC_Framework/
+         AECC_Packages/
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
+    <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
+    <ProjectReference Include="..\AECC_Framework\AECC_Framework.csproj" />
+  </ItemGroup>
+</Project>

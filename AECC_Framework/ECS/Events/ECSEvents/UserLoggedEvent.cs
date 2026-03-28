@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Network;
+using MessagePack;
 
 namespace AECC.ECS.DefaultObjects.Events.ECSEvents
 {
@@ -20,13 +21,13 @@ namespace AECC.ECS.DefaultObjects.Events.ECSEvents
         static public new long Id { get; set; } = 25;
         [System.NonSerialized]
         [Newtonsoft.Json.JsonIgnore]
-        public ECSEntity userEntity;
-        public long userEntityId;
-        public string Username;
-        public bool userRelogin = false;
+        [IgnoreMemberAttribute] public ECSEntity userEntity;
+        [Key(10)] public long userEntityId;
+        [Key(11)] public string Username;
+        [Key(12)] public bool userRelogin = false;
         [System.NonSerialized]
         [Newtonsoft.Json.JsonIgnore]
-        public static Action<UserLoggedEvent> actionAfterLoggin = (loggedEvent) => { };
+        [IgnoreMemberAttribute] public static Action<UserLoggedEvent> actionAfterLoggin = (loggedEvent) => { };
         public override void Execute()
         {
             actionAfterLoggin(this);

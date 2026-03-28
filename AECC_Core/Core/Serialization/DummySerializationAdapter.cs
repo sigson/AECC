@@ -27,6 +27,11 @@ namespace AECC.Core.Serialization
             throw new NotImplementedException();
         }
 
+        public void InitializeAdapterCache(IEnumerable<Type> types)
+        {
+            
+        }
+
         public byte[] SerializeAdapterEntity(SerializedEntity entity)
         {
             throw new NotImplementedException();

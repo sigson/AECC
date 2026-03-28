@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Network;
+using MessagePack;
 
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
 {
@@ -17,7 +18,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
     public class ConfigCheckEvent : NetworkEvent
     {
         static public new long Id { get; set; } = 19;
-        public long configHash;
+        [Key(10)] public long configHash;
         public override void Execute()
         {
             if (GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Server)

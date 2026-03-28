@@ -57,6 +57,7 @@ namespace AECC.Core
             AllSystems = AllSystems.Except(ReturnExceptedSystems()).ToList<ECSExecutableContractContainer>();
             foreach(ECSExecutableContractContainer system in AllSystems)
             {
+                system.ECSWorldOwner = this.world;
                 system.Initialize();
                 if (system.TimeDependExecution)
                 {

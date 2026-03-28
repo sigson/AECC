@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Network;
+using MessagePack;
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
 {
     [LowLevelNetworkEvent]
@@ -16,11 +17,11 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [TypeUid(27)]
     public class IsUsernameAvailableEvent : NetworkEvent
     {
-        public string Username = "";
-        public bool IsAvailable = false;
+        [Key(10)] public string Username = "";
+        [Key(11)] public bool IsAvailable = false;
         [System.NonSerialized]
         [Newtonsoft.Json.JsonIgnore]
-        public static Action<IsUsernameAvailableEvent> action = (errorEvent) => { };
+        [IgnoreMemberAttribute] public static Action<IsUsernameAvailableEvent> action = (errorEvent) => { };
         static public new long Id { get; set; } = 27;
         public override void Execute()
         {

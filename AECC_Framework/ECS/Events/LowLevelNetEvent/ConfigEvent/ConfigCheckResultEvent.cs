@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Network;
+using MessagePack;
 
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
 {
@@ -16,8 +17,8 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
     [TypeUid(20)]
     public class ConfigCheckResultEvent : NetworkEvent
     {
-        public byte[] NewConfig = null;
-        public long configHash;
+        [Key(10)] public byte[] NewConfig = null;
+        [Key(11)] public long configHash;
         static public new long Id { get; set; } = 20;
         public override void Execute()
         {

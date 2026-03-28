@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Network;
+using MessagePack;
 
 namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
 {
@@ -16,11 +17,11 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [TypeUid(22)]
     public class ClientRegistrationEvent : NetworkEvent
     {
-        public string Username = "";
-        public string Password = "";
-        public string Email = "";
-        public string HardwareId = "";
-        public string CaptchaResultHash = "";
+        [Key(10)] public string Username = "";
+        [Key(11)] public string Password = "";
+        [Key(12)] public string Email = "";
+        [Key(13)] public string HardwareId = "";
+        [Key(14)] public string CaptchaResultHash = "";
         static public new long Id { get; set; } = 22;
         public override void Execute()
         {

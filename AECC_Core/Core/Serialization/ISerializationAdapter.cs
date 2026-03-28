@@ -24,5 +24,7 @@ namespace AECC.Core.Serialization
         byte[] SerializeECSEntity(ECSEntity entity);
 
         ECSEntity DeserializeECSEntity(byte[] entity);
+
+        void InitializeAdapterCache(IEnumerable<Type> types);
     }
 }

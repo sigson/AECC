@@ -69,6 +69,7 @@ namespace AECC.Core.Serialization
                 SerializationCache = ecsObjects;
             }
             serializationAdapter = adapter;
+            serializationAdapter.InitializeAdapterCache(SerializationCache);
             worldOwner = world;
         }
 

@@ -43,11 +43,12 @@ namespace AECC.Core
         }
         public WorldTypeEnum WorldType = WorldTypeEnum.Offline;
         public EntityNetSerializer EntityWorldSerializer = new EntityNetSerializer();
+        public ISerializationAdapter serializationAdapter = new DummySerializationAdapter();
         
         public void InitWorldScope(Func<Type, bool> staticContractFiltering)
         {
             SingletonFallback = this;
-            EntityWorldSerializer.InitSerialize(this, new DummySerializationAdapter());
+            EntityWorldSerializer.InitSerialize(this, serializationAdapter);
             entityManager = new ECSEntityManager(this);
             componentManager = new ECSComponentManager(this);
             contractsManager = new ECSContractsManager(this, staticContractFiltering);
