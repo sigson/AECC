@@ -68,7 +68,7 @@ namespace TestClient
             {
                 Host = SERVER_HOST,
                 Port = SERVER_PORT,
-                Protocol = NetworkProtocol.TCP,
+                Protocol = NetworkProtocol.WebSocket,
                 IsListener = false,
                 BufferSize = 65536
             };
