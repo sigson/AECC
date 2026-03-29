@@ -112,7 +112,7 @@ namespace AECC.Network.Adapters
     {
         public long Id { get; set; }
         public new string Address { get; }
-        int ISocketAdapter.Port { get; }
+        int ISocketAdapter.Port => _port;
         public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.TCP;
 
@@ -385,7 +385,6 @@ namespace AECC.Network.Adapters
         public long Id { get; set; }
         public new string Address { get; }
         int ISocketAdapter.Port => _port;
-        public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.WebSocket;
 
         // Ping/latency
@@ -400,6 +399,7 @@ namespace AECC.Network.Adapters
         public event Action<ISocketAdapter, Exception> ErrorOccurred;
 
         private readonly int _port;
+        private volatile bool _wsConnected;
 
         public WsClientAdapter(string address, int port, int bufferSize)
             : base(address, port)
@@ -408,15 +408,40 @@ namespace AECC.Network.Adapters
             _port = port;
         }
 
+        /// <summary>
+        /// Build the HTTP Upgrade request required by the WebSocket handshake.
+        /// Without this override, NetCoreServer sends an empty request and
+        /// the server rejects the connection — the WS handshake never completes.
+        /// </summary>
+        public override void OnWsConnecting(HttpRequest request)
+        {
+            request.SetBegin("GET", "/");
+            request.SetHeader("Host", $"{Address}:{_port}");
+            request.SetHeader("Origin", $"http://{Address}");
+            request.SetHeader("Upgrade", "websocket");
+            request.SetHeader("Connection", "Upgrade");
+            request.SetHeader("Sec-WebSocket-Key", Convert.ToBase64String(WsNonce));
+            request.SetHeader("Sec-WebSocket-Version", "13");
+            request.SetBody();
+        }
+
         public override void OnWsConnected(HttpResponse response)
         {
+            _wsConnected = true;
             Connected?.Invoke(this);
         }
 
         public override void OnWsDisconnected()
         {
+            _wsConnected = false;
             Disconnected?.Invoke(this);
         }
+
+        /// <summary>
+        /// Reports true only after the WebSocket handshake has completed,
+        /// not merely after the underlying TCP connection is established.
+        /// </summary>
+        public new bool IsConnected => _wsConnected && base.IsConnected;
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
@@ -543,7 +568,6 @@ namespace AECC.Network.Adapters
         public long Id { get; set; }
         public new string Address { get; }
         int ISocketAdapter.Port => _port;
-        public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.WebSocketSecure;
 
         // Ping/latency
@@ -558,6 +582,7 @@ namespace AECC.Network.Adapters
         public event Action<ISocketAdapter, Exception> ErrorOccurred;
 
         private readonly int _port;
+        private volatile bool _wsConnected;
 
         public WssClientAdapter(SslContext context, string address, int port, int bufferSize)
             : base(context, address, port)
@@ -566,15 +591,40 @@ namespace AECC.Network.Adapters
             _port = port;
         }
 
+        /// <summary>
+        /// Build the HTTP Upgrade request required by the WebSocket Secure handshake.
+        /// Without this override, NetCoreServer sends an empty request and
+        /// the server rejects the connection — the WSS handshake never completes.
+        /// </summary>
+        public override void OnWsConnecting(HttpRequest request)
+        {
+            request.SetBegin("GET", "/");
+            request.SetHeader("Host", $"{Address}:{_port}");
+            request.SetHeader("Origin", $"https://{Address}");
+            request.SetHeader("Upgrade", "websocket");
+            request.SetHeader("Connection", "Upgrade");
+            request.SetHeader("Sec-WebSocket-Key", Convert.ToBase64String(WsNonce));
+            request.SetHeader("Sec-WebSocket-Version", "13");
+            request.SetBody();
+        }
+
         public override void OnWsConnected(HttpResponse response)
         {
+            _wsConnected = true;
             Connected?.Invoke(this);
         }
 
         public override void OnWsDisconnected()
         {
+            _wsConnected = false;
             Disconnected?.Invoke(this);
         }
+
+        /// <summary>
+        /// Reports true only after the WebSocket Secure handshake has completed,
+        /// not merely after the underlying TLS connection is established.
+        /// </summary>
+        public new bool IsConnected => _wsConnected && base.IsConnected;
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
