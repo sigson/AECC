@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using NetCoreServer;
 using AECC.Core.Logging;
 
@@ -36,6 +38,10 @@ namespace AECC.Network.Adapters
         public event Action<ISocketAdapter, Exception> ErrorOccurred;
 
         private readonly TcpServerAdapter _serverRef;
+
+        // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private int _draining;
 
         public TcpSessionAdapter(TcpServerAdapter server) : base(server)
         {
@@ -83,6 +89,32 @@ namespace AECC.Network.Adapters
             catch (Exception ex) { NLogger.LogError($"TcpSessionAdapter.OnReceived: {ex}"); }
         }
 
+        protected override void OnSent(long sent, long pending)
+        {
+            base.OnSent(sent, pending);
+            DrainPendingSends();
+        }
+
+        private void DrainPendingSends()
+        {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_pendingSends.TryPeek(out var buf))
+                {
+                    if (base.SendAsync(buf))
+                        _pendingSends.TryDequeue(out _);
+                    else
+                        break;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+            }
+        }
+
         protected override void OnError(SocketError error)
         {
             try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
@@ -90,7 +122,11 @@ namespace AECC.Network.Adapters
         }
 
         void ISocketAdapter.Send(byte[] buf) => base.Send(buf);
-        void ISocketAdapter.SendAsync(byte[] buf) => base.SendAsync(buf);
+        void ISocketAdapter.SendAsync(byte[] buf)
+        {
+            if (!base.SendAsync(buf))
+                _pendingSends.Enqueue(buf);
+        }
         void ISocketAdapter.Connect() { }
         void ISocketAdapter.Disconnect() => base.Disconnect();
         void ISocketAdapter.Reconnect() { }
@@ -156,6 +192,10 @@ namespace AECC.Network.Adapters
 
         private readonly int _port;
 
+        // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private int _draining;
+
         public TcpClientAdapter(string address, int port, int bufferSize)
             : base(address, port)
         {
@@ -194,6 +234,32 @@ namespace AECC.Network.Adapters
             catch (Exception ex) { NLogger.LogError($"TcpClientAdapter.OnReceived: {ex}"); }
         }
 
+        protected override void OnSent(long sent, long pending)
+        {
+            base.OnSent(sent, pending);
+            DrainPendingSends();
+        }
+
+        private void DrainPendingSends()
+        {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_pendingSends.TryPeek(out var buf))
+                {
+                    if (base.SendAsync(buf))
+                        _pendingSends.TryDequeue(out _);
+                    else
+                        break;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+            }
+        }
+
         protected override void OnError(SocketError error)
         {
             try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
@@ -201,7 +267,11 @@ namespace AECC.Network.Adapters
         }
 
         void ISocketAdapter.Send(byte[] buf) => base.Send(buf);
-        void ISocketAdapter.SendAsync(byte[] buf) => base.SendAsync(buf);
+        void ISocketAdapter.SendAsync(byte[] buf)
+        {
+            if (!base.SendAsync(buf))
+                _pendingSends.Enqueue(buf);
+        }
         void ISocketAdapter.Connect() => base.ConnectAsync();
         void ISocketAdapter.Disconnect() => base.DisconnectAsync();
         void ISocketAdapter.Reconnect() => base.ReconnectAsync();
@@ -363,6 +433,14 @@ namespace AECC.Network.Adapters
 
         private readonly WsServerAdapter _serverRef;
 
+        // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
+        // In NetCoreServer, SendBinaryAsync returns false when an async send is already
+        // in-flight (_sending == true). This happens during OnWsConnected because the
+        // HTTP 101 response is still being sent. Without the queue, the AssignId packet
+        // (and any other send during contention) would be silently dropped.
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private int _draining;
+
         public WsSessionAdapter(WsServerAdapter server) : base(server)
         {
             _serverRef = server;
@@ -382,10 +460,43 @@ namespace AECC.Network.Adapters
             try
             {
                 CacheEndpoint();
+                // Raise immediately so that DataReceived is wired and the identity
+                // handshake starts. If the AssignId send fails (101 still in-flight),
+                // the send queue catches it and retries in OnSent.
                 Connected?.Invoke(this);
                 _serverRef.RaiseClientConnected(this);
             }
             catch (Exception ex) { NLogger.LogError($"WsSessionAdapter.OnWsConnected: {ex}"); }
+        }
+
+        /// <summary>
+        /// Called by NetCoreServer when an async send completes.
+        /// Drains any queued sends that failed due to the socket being busy.
+        /// </summary>
+        protected override void OnSent(long sent, long pending)
+        {
+            base.OnSent(sent, pending);
+            DrainPendingSends();
+        }
+
+        private void DrainPendingSends()
+        {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_pendingSends.TryPeek(out var buf))
+                {
+                    if (base.SendBinaryAsync(buf))
+                        _pendingSends.TryDequeue(out _);
+                    else
+                        break;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+            }
         }
 
         public override void OnWsDisconnected()
@@ -418,13 +529,13 @@ namespace AECC.Network.Adapters
         void ISocketAdapter.Send(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WsSessionAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
 
         void ISocketAdapter.SendAsync(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WsSessionAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
         void ISocketAdapter.Connect() { }
         void ISocketAdapter.Disconnect() => base.Disconnect();
@@ -451,6 +562,9 @@ namespace AECC.Network.Adapters
             Address = address;
             Port = port;
             BufferSize = bufferSize;
+            OptionNoDelay = true;
+            OptionReceiveBufferSize = bufferSize;
+            OptionSendBufferSize = bufferSize;
         }
 
         protected override TcpSession CreateSession() => new WsSessionAdapter(this);
@@ -488,11 +602,18 @@ namespace AECC.Network.Adapters
         private readonly int _port;
         private volatile bool _wsConnected;
 
+        // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private int _draining;
+
         public WsClientAdapter(string address, int port, int bufferSize)
             : base(address, port)
         {
             Address = address;
             _port = port;
+            OptionNoDelay = true;
+            OptionReceiveBufferSize = bufferSize;
+            OptionSendBufferSize = bufferSize;
         }
 
         /// <summary>
@@ -539,6 +660,32 @@ namespace AECC.Network.Adapters
         /// </summary>
         public new bool IsConnected => _wsConnected && base.IsConnected;
 
+        protected override void OnSent(long sent, long pending)
+        {
+            base.OnSent(sent, pending);
+            DrainPendingSends();
+        }
+
+        private void DrainPendingSends()
+        {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_pendingSends.TryPeek(out var buf))
+                {
+                    if (base.SendBinaryAsync(buf))
+                        _pendingSends.TryDequeue(out _);
+                    else
+                        break;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+            }
+        }
+
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
             try
@@ -559,13 +706,13 @@ namespace AECC.Network.Adapters
         void ISocketAdapter.Send(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WsClientAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
 
         void ISocketAdapter.SendAsync(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WsClientAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
 
         void ISocketAdapter.Connect() => base.ConnectAsync();
@@ -606,6 +753,10 @@ namespace AECC.Network.Adapters
 
         private readonly WssServerAdapter _serverRef;
 
+        // ── Send queue: same rationale as WsSessionAdapter ──
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private int _draining;
+
         public WssSessionAdapter(WssServerAdapter server) : base(server)
         {
             _serverRef = server;
@@ -629,6 +780,32 @@ namespace AECC.Network.Adapters
                 _serverRef.RaiseClientConnected(this);
             }
             catch (Exception ex) { NLogger.LogError($"WssSessionAdapter.OnWsConnected: {ex}"); }
+        }
+
+        protected override void OnSent(long sent, long pending)
+        {
+            base.OnSent(sent, pending);
+            DrainPendingSends();
+        }
+
+        private void DrainPendingSends()
+        {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_pendingSends.TryPeek(out var buf))
+                {
+                    if (base.SendBinaryAsync(buf))
+                        _pendingSends.TryDequeue(out _);
+                    else
+                        break;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+            }
         }
 
         public override void OnWsDisconnected()
@@ -661,13 +838,13 @@ namespace AECC.Network.Adapters
         void ISocketAdapter.Send(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WssSessionAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
 
         void ISocketAdapter.SendAsync(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WssSessionAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
         void ISocketAdapter.Connect() { }
         void ISocketAdapter.Disconnect() => base.Disconnect();
@@ -694,6 +871,9 @@ namespace AECC.Network.Adapters
             Address = address;
             Port = port;
             BufferSize = bufferSize;
+            OptionNoDelay = true;
+            OptionReceiveBufferSize = bufferSize;
+            OptionSendBufferSize = bufferSize;
         }
 
         protected override SslSession CreateSession() => new WssSessionAdapter(this);
@@ -731,11 +911,18 @@ namespace AECC.Network.Adapters
         private readonly int _port;
         private volatile bool _wsConnected;
 
+        // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private int _draining;
+
         public WssClientAdapter(SslContext context, string address, int port, int bufferSize)
             : base(context, address, port)
         {
             Address = address;
             _port = port;
+            OptionNoDelay = true;
+            OptionReceiveBufferSize = bufferSize;
+            OptionSendBufferSize = bufferSize;
         }
 
         /// <summary>
@@ -766,14 +953,14 @@ namespace AECC.Network.Adapters
                 _wsConnected = true;
                 Connected?.Invoke(this);
             }
-            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsConnected: {ex}"); }
+            catch (Exception ex) { NLogger.LogError($"WssClientAdapter.OnWsConnected: {ex}"); }
         }
 
         public override void OnWsDisconnected()
         {
             _wsConnected = false;
             try { Disconnected?.Invoke(this); }
-            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsDisconnected: {ex}"); }
+            catch (Exception ex) { NLogger.LogError($"WssClientAdapter.OnWsDisconnected: {ex}"); }
         }
 
         /// <summary>
@@ -781,6 +968,32 @@ namespace AECC.Network.Adapters
         /// not merely after the underlying TLS connection is established.
         /// </summary>
         public new bool IsConnected => _wsConnected && base.IsConnected;
+
+        protected override void OnSent(long sent, long pending)
+        {
+            base.OnSent(sent, pending);
+            DrainPendingSends();
+        }
+
+        private void DrainPendingSends()
+        {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_pendingSends.TryPeek(out var buf))
+                {
+                    if (base.SendBinaryAsync(buf))
+                        _pendingSends.TryDequeue(out _);
+                    else
+                        break;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _draining, 0);
+            }
+        }
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
@@ -802,13 +1015,13 @@ namespace AECC.Network.Adapters
         void ISocketAdapter.Send(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WssClientAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
 
         void ISocketAdapter.SendAsync(byte[] buf)
         {
             if (!base.SendBinaryAsync(buf))
-                NLogger.LogError($"WssClientAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+                _pendingSends.Enqueue(buf);
         }
         void ISocketAdapter.Connect() => base.ConnectAsync();
         void ISocketAdapter.Disconnect() => base.DisconnectAsync();

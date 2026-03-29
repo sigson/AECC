@@ -158,6 +158,20 @@ namespace TestShared.Systems
                 return;
             }
 
+                foreach (var gameEntity in entities)
+                {
+                    try
+                    {
+                        // Сначала сериализуем сущность (подготавливает GDAP-данные)
+                        world.EntityWorldSerializer.SerializeEntity(gameEntity, true);
+
+                    }
+                    catch (Exception ex)
+                    {
+                        NLogger.LogError($"WorldSyncSystem: serialization error for entity {gameEntity.instanceId}: {ex.Message}");
+                    }
+                }
+
             foreach (var clientEntity in clientEntities)
             {
                 var socketComp = clientEntity.TryGetComponent<SocketComponent>();
@@ -170,7 +184,7 @@ namespace TestShared.Systems
                     try
                     {
                         // Сначала сериализуем сущность (подготавливает GDAP-данные)
-                        world.EntityWorldSerializer.SerializeEntity(gameEntity, true);
+                        //world.EntityWorldSerializer.SerializeEntity(gameEntity, true);
 
                         // Затем строим пакет с GDAP-фильтрацией:
                         // clientEntity (кому) -> gameEntity (что), с учётом совпадающих GDAP

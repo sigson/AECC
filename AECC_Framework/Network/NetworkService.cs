@@ -431,6 +431,19 @@ namespace AECC.Network
                     catch (Exception ex) { NLogger.LogError($"RPC bridge dispose error: {ex.Message}"); }
                 }
 
+                // ── Notify the outbound buffer so it stops trying to send to this socket ──
+                if (socket.Id != 0 && socket.CachedDestination != null)
+                {
+                    try
+                    {
+                        OutboundBuffer.OnSocketDisconnected(socket, socket.CachedDestination);
+                    }
+                    catch (Exception ex)
+                    {
+                        NLogger.LogError($"OutboundBuffer disconnect cleanup error: {ex.Message}");
+                    }
+                }
+
                 if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
                 {
                     try
