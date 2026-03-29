@@ -397,83 +397,126 @@ namespace AECC.Network
 
         private void OnTransportClientConnected(ISocketAdapter socket)
         {
-            socket.DataReceived += OnRawDataReceived;
-
-            if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
+            try
             {
-                if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
-                    _accumulators[socket] = new StreamFrameAccumulator();
+                socket.DataReceived += OnRawDataReceived;
 
-                _identityManager.ServerOnClientConnected(socket);
+                if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
+                {
+                    if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
+                        _accumulators[socket] = new StreamFrameAccumulator();
+
+                    _identityManager.ServerOnClientConnected(socket);
+                }
+                else
+                {
+                    OnSocketIdentityReady(socket, SocketReadyReason.NewConnection);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                OnSocketIdentityReady(socket, SocketReadyReason.NewConnection);
+                NLogger.LogError($"OnTransportClientConnected error: {ex}");
             }
         }
 
         private void OnTransportClientDisconnected(ISocketAdapter socket)
         {
-            _accumulators.TryRemove(socket, out _);
+            try
+            {
+                _accumulators.TryRemove(socket, out _);
 
-            if (_rpcBridges.TryRemove(socket, out var bridge))
-                bridge.Dispose();
+                if (_rpcBridges.TryRemove(socket, out var bridge))
+                {
+                    try { bridge.Dispose(); }
+                    catch (Exception ex) { NLogger.LogError($"RPC bridge dispose error: {ex.Message}"); }
+                }
 
-            if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
-                _identityManager.ServerOnClientDisconnected(socket);
+                if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
+                {
+                    try
+                    {
+                        _identityManager.ServerOnClientDisconnected(socket);
+                    }
+                    catch (Exception ex)
+                    {
+                        NLogger.LogError($"Identity disconnect handler error: {ex.Message}");
+                    }
+                }
 
-            if (socket.Id != 0)
-                SocketsById.TryRemove(socket.Id, out _);
+                if (socket.Id != 0)
+                    SocketsById.TryRemove(socket.Id, out _);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"OnTransportClientDisconnected error: {ex}");
+            }
         }
 
         private void OnTransportClientSelfConnected(ISocketAdapter socket)
         {
-            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
-                _accumulators[socket] = new StreamFrameAccumulator();
-
-            if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
-                _identityManager.ClientOnConnected(socket);
-
-            var key = (socket.Protocol, socket.Address, socket.Port);
-            if (_reconnectTimers.TryRemove(key, out var timer))
+            try
             {
-                timer.Stop();
-                timer.Dispose();
+                if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
+                    _accumulators[socket] = new StreamFrameAccumulator();
+
+                if (ProtocolTraits.IsConnectionOriented(socket.Protocol))
+                    _identityManager.ClientOnConnected(socket);
+
+                var key = (socket.Protocol, socket.Address, socket.Port);
+                if (_reconnectTimers.TryRemove(key, out var timer))
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"OnTransportClientSelfConnected error: {ex}");
             }
         }
 
         private void OnTransportClientSelfDisconnected(ISocketAdapter socket, NetworkDestination config)
         {
-            _accumulators.TryRemove(socket, out _);
-
-            if (_rpcBridges.TryRemove(socket, out var bridge))
-                bridge.Dispose();
-
-            OutboundBuffer.OnSocketDisconnected(socket, config);
-
-            // ── Dispatch SocketDisconnectedEvent into the event bus ──
-            DispatchSocketDisconnectedEvent(socket);
-
-            OnSocketDisconnected?.Invoke(socket);
-
-            var key = config.RouteKey;
-            if (!_reconnectTimers.ContainsKey(key))
+            try
             {
-                var timer = new TimerCompat(2000, (sender, e) =>
-                {
-                    try
-                    {
-                        NLogger.LogNetwork($"Reconnecting: {config.Protocol} to {config.Host}:{config.Port}");
-                        socket.Reconnect();
-                    }
-                    catch (Exception ex)
-                    {
-                        NLogger.LogError($"Reconnect failed: {ex.Message}");
-                    }
-                }, loop: true, asyncRun: true);
+                _accumulators.TryRemove(socket, out _);
 
-                _reconnectTimers[key] = timer;
-                timer.Start();
+                if (_rpcBridges.TryRemove(socket, out var bridge))
+                {
+                    try { bridge.Dispose(); }
+                    catch (Exception ex) { NLogger.LogError($"RPC bridge dispose error on client disconnect: {ex.Message}"); }
+                }
+
+                OutboundBuffer.OnSocketDisconnected(socket, config);
+
+                // ── Dispatch SocketDisconnectedEvent into the event bus ──
+                DispatchSocketDisconnectedEvent(socket);
+
+                OnSocketDisconnected?.Invoke(socket);
+
+                var key = config.RouteKey;
+                if (!_reconnectTimers.ContainsKey(key))
+                {
+                    var timer = new TimerCompat(2000, (sender, e) =>
+                    {
+                        try
+                        {
+                            NLogger.LogNetwork($"Reconnecting: {config.Protocol} to {config.Host}:{config.Port}");
+                            socket.Reconnect();
+                        }
+                        catch (Exception ex)
+                        {
+                            NLogger.LogError($"Reconnect failed: {ex.Message}");
+                        }
+                    }, loop: true, asyncRun: true);
+
+                    _reconnectTimers[key] = timer;
+                    timer.Start();
+                }
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"OnTransportClientSelfDisconnected error: {ex}");
             }
         }
 
@@ -483,75 +526,96 @@ namespace AECC.Network
 
         private void OnSocketIdentityReady(ISocketAdapter socket, SocketReadyReason reason)
         {
-            if (socket.Id != 0)
-                SocketsById[socket.Id] = socket;
-
-            // ── Cache destination on the socket for zero-alloc reply routing ──
-            if (socket.CachedDestination == null)
+            try
             {
-                // Server-side sessions: route by socket ID
                 if (socket.Id != 0)
+                    SocketsById[socket.Id] = socket;
+
+                // ── Cache destination on the socket for zero-alloc reply routing ──
+                if (socket.CachedDestination == null)
                 {
-                    socket.CachedDestination = NetworkDestination.ForSocket(socket.Id);
-                }
-                else
-                {
-                    // Fallback: look up from ClientSockets
-                    foreach (var kvp in ClientSockets)
+                    // Server-side sessions: route by socket ID
+                    if (socket.Id != 0)
                     {
-                        if (kvp.Value == socket)
+                        socket.CachedDestination = NetworkDestination.ForSocket(socket.Id);
+                    }
+                    else
+                    {
+                        // Fallback: look up from ClientSockets
+                        foreach (var kvp in ClientSockets)
                         {
-                            socket.CachedDestination = NetworkDestination.ForHost(
-                                kvp.Key.Item2, kvp.Key.Item3, kvp.Key.Item1);
-                            break;
+                            if (kvp.Value == socket)
+                            {
+                                socket.CachedDestination = NetworkDestination.ForHost(
+                                    kvp.Key.Item2, kvp.Key.Item3, kvp.Key.Item1);
+                                break;
+                            }
                         }
                     }
                 }
+                else if (IsServer && socket.Id != 0 && !socket.CachedDestination.IsSocketRouted)
+                {
+                    // Server-side: upgrade to socket-routed destination now that we have the ID
+                    socket.CachedDestination = NetworkDestination.ForSocket(socket.Id);
+                }
+
+                // RPC bridge: skip for Godot protocols (StreamJsonRpc uses System.IO.Pipelines
+                // which requires async threading — incompatible with single-threaded Godot web)
+                if (!ProtocolTraits.IsGodotProtocol(socket.Protocol))
+                {
+                    try
+                    {
+                        var rpcBridge = new RpcBridge(socket);
+                        _rpcBridges[socket] = rpcBridge;
+                        rpcBridge.Start();
+                    }
+                    catch (Exception ex)
+                    {
+                        NLogger.LogError($"RPC bridge creation failed for socket {socket.Id}: {ex.Message}");
+                    }
+                }
+
+                if (IsServer)
+                    EventManager.MaliciousScoringStorage[socket.Id] = new ScoreObject { SocketId = socket.Id };
+
+                OutboundBuffer.OnSocketReady(socket, socket.CachedDestination);
+
+                // ── Dispatch lifecycle event into the event bus ──
+                switch (reason)
+                {
+                    case SocketReadyReason.NewConnection:
+                        DispatchSocketConnectedEvent(socket);
+                        break;
+
+                    case SocketReadyReason.Restored:
+                        DispatchSocketReconnectedEvent(socket);
+                        break;
+                }
+
+                OnSocketReady?.Invoke(socket);
             }
-            else if (IsServer && socket.Id != 0 && !socket.CachedDestination.IsSocketRouted)
+            catch (Exception ex)
             {
-                // Server-side: upgrade to socket-routed destination now that we have the ID
-                socket.CachedDestination = NetworkDestination.ForSocket(socket.Id);
+                NLogger.LogError($"OnSocketIdentityReady error for socket {socket.Id}: {ex}");
             }
-
-            // RPC bridge: skip for Godot protocols (StreamJsonRpc uses System.IO.Pipelines
-            // which requires async threading — incompatible with single-threaded Godot web)
-            if (!ProtocolTraits.IsGodotProtocol(socket.Protocol))
-            {
-                var rpcBridge = new RpcBridge(socket);
-                _rpcBridges[socket] = rpcBridge;
-                rpcBridge.Start();
-            }
-
-            if (IsServer)
-                EventManager.MaliciousScoringStorage[socket.Id] = new ScoreObject { SocketId = socket.Id };
-
-            OutboundBuffer.OnSocketReady(socket, socket.CachedDestination);
-
-            // ── Dispatch lifecycle event into the event bus ──
-            switch (reason)
-            {
-                case SocketReadyReason.NewConnection:
-                    DispatchSocketConnectedEvent(socket);
-                    break;
-
-                case SocketReadyReason.Restored:
-                    DispatchSocketReconnectedEvent(socket);
-                    break;
-            }
-
-            OnSocketReady?.Invoke(socket);
         }
 
         private void OnSocketIdentityLost(ISocketAdapter socket)
         {
-            if (IsServer)
-                EventManager.MaliciousScoringStorage.TryRemove(socket.Id, out _);
+            try
+            {
+                if (IsServer)
+                    EventManager.MaliciousScoringStorage.TryRemove(socket.Id, out _);
 
-            // ── Dispatch SocketDisconnectedEvent into the event bus ──
-            DispatchSocketDisconnectedEvent(socket);
+                // ── Dispatch SocketDisconnectedEvent into the event bus ──
+                DispatchSocketDisconnectedEvent(socket);
 
-            OnSocketDisconnected?.Invoke(socket);
+                OnSocketDisconnected?.Invoke(socket);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"OnSocketIdentityLost error for socket {socket.Id}: {ex}");
+            }
         }
 
         // =====================================================================
@@ -560,16 +624,16 @@ namespace AECC.Network
 
         private void DispatchSocketConnectedEvent(ISocketAdapter socket)
         {
-            var evt = new SocketConnectedEvent
-            {
-                SocketId = socket.Id,
-                Address = socket.Address,
-                Port = socket.Port,
-                ProtocolId = (int)socket.Protocol
-            };
-
             try
             {
+                var evt = new SocketConnectedEvent
+                {
+                    SocketId = socket.Id,
+                    Address = socket.Address,
+                    Port = socket.Port,
+                    ProtocolId = (int)socket.Protocol
+                };
+
                 EventManager.Dispatch(evt);
             }
             catch (Exception ex)
@@ -580,16 +644,16 @@ namespace AECC.Network
 
         private void DispatchSocketReconnectedEvent(ISocketAdapter socket)
         {
-            var evt = new SocketReconnectedEvent
-            {
-                SocketId = socket.Id,
-                Address = socket.Address,
-                Port = socket.Port,
-                ProtocolId = (int)socket.Protocol
-            };
-
             try
             {
+                var evt = new SocketReconnectedEvent
+                {
+                    SocketId = socket.Id,
+                    Address = socket.Address,
+                    Port = socket.Port,
+                    ProtocolId = (int)socket.Protocol
+                };
+
                 EventManager.Dispatch(evt);
             }
             catch (Exception ex)
@@ -600,21 +664,40 @@ namespace AECC.Network
 
         private void DispatchSocketDisconnectedEvent(ISocketAdapter socket)
         {
-            var evt = new SocketDisconnectedEvent
-            {
-                SocketId = socket.Id,
-                Address = socket.Address,
-                Port = socket.Port,
-                ProtocolId = (int)socket.Protocol
-            };
-
             try
             {
+                // Socket properties may throw if the underlying transport is already disposed.
+                // Read safely with fallbacks.
+                long socketId = 0;
+                string address = "unknown";
+                int port = 0;
+                int protocolId = 0;
+
+                try
+                {
+                    socketId = socket.Id;
+                    address = socket.Address ?? "unknown";
+                    port = socket.Port;
+                    protocolId = (int)socket.Protocol;
+                }
+                catch (Exception ex)
+                {
+                    NLogger.LogError($"DispatchSocketDisconnectedEvent: failed to read socket properties: {ex.Message}");
+                }
+
+                var evt = new SocketDisconnectedEvent
+                {
+                    SocketId = socketId,
+                    Address = address,
+                    Port = port,
+                    ProtocolId = protocolId
+                };
+
                 EventManager.Dispatch(evt);
             }
             catch (Exception ex)
             {
-                NLogger.LogError($"Failed to dispatch SocketDisconnectedEvent for socket {socket.Id}: {ex.Message}");
+                NLogger.LogError($"Failed to dispatch SocketDisconnectedEvent: {ex.Message}");
             }
         }
 
@@ -624,24 +707,31 @@ namespace AECC.Network
 
         private void OnRawDataReceived(ISocketAdapter socket, byte[] rawData)
         {
-            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
+            try
             {
-                if (!_accumulators.TryGetValue(socket, out var acc))
+                if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
                 {
-                    acc = new StreamFrameAccumulator();
-                    _accumulators[socket] = acc;
-                }
+                    if (!_accumulators.TryGetValue(socket, out var acc))
+                    {
+                        acc = new StreamFrameAccumulator();
+                        _accumulators[socket] = acc;
+                    }
 
-                var messages = acc.Feed(rawData);
-                foreach (var (type, payload) in messages)
+                    var messages = acc.Feed(rawData);
+                    foreach (var (type, payload) in messages)
+                    {
+                        HandleFramedMessage(socket, type, payload);
+                    }
+                }
+                else
                 {
+                    var (type, payload) = DatagramFrame.Unpack(rawData);
                     HandleFramedMessage(socket, type, payload);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                var (type, payload) = DatagramFrame.Unpack(rawData);
-                HandleFramedMessage(socket, type, payload);
+                NLogger.LogError($"OnRawDataReceived error from socket {socket.Id}: {ex}");
             }
         }
 

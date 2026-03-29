@@ -15,8 +15,12 @@ namespace AECC.Network.Adapters
     public class TcpSessionAdapter : TcpSession, ISocketAdapter
     {
         public long Id { get; set; }
-        public new string Address => Socket?.RemoteEndPoint is IPEndPoint ep ? ep.Address.ToString() : "";
-        int ISocketAdapter.Port => Socket?.RemoteEndPoint is IPEndPoint ep ? ep.Port : 0;
+
+        private string _cachedAddress = "";
+        private int _cachedPort;
+
+        public new string Address => _cachedAddress;
+        int ISocketAdapter.Port => _cachedPort;
         public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.TCP;
 
@@ -38,28 +42,51 @@ namespace AECC.Network.Adapters
             _serverRef = server;
         }
 
+        private void CacheEndpoint()
+        {
+            if (Socket?.RemoteEndPoint is IPEndPoint ep)
+            {
+                _cachedAddress = ep.Address.ToString();
+                _cachedPort = ep.Port;
+            }
+        }
+
         protected override void OnConnected()
         {
-            Connected?.Invoke(this);
-            _serverRef.RaiseClientConnected(this);
+            try
+            {
+                CacheEndpoint();
+                Connected?.Invoke(this);
+                _serverRef.RaiseClientConnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"TcpSessionAdapter.OnConnected: {ex}"); }
         }
 
         protected override void OnDisconnected()
         {
-            Disconnected?.Invoke(this);
-            _serverRef.RaiseClientDisconnected(this);
+            try
+            {
+                Disconnected?.Invoke(this);
+                _serverRef.RaiseClientDisconnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"TcpSessionAdapter.OnDisconnected: {ex}"); }
         }
 
         protected override void OnReceived(byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"TcpSessionAdapter.OnReceived: {ex}"); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"TcpSessionAdapter.OnError: {ex}"); }
         }
 
         void ISocketAdapter.Send(byte[] buf) => base.Send(buf);
@@ -141,26 +168,36 @@ namespace AECC.Network.Adapters
 
         protected override void OnConnected()
         {
-            Connected?.Invoke(this);
-            ReceiveAsync();
+            try
+            {
+                Connected?.Invoke(this);
+                ReceiveAsync();
+            }
+            catch (Exception ex) { NLogger.LogError($"TcpClientAdapter.OnConnected: {ex}"); }
         }
 
         protected override void OnDisconnected()
         {
-            Disconnected?.Invoke(this);
+            try { Disconnected?.Invoke(this); }
+            catch (Exception ex) { NLogger.LogError($"TcpClientAdapter.OnDisconnected: {ex}"); }
         }
 
         protected override void OnReceived(byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
-            ReceiveAsync();
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+                ReceiveAsync();
+            }
+            catch (Exception ex) { NLogger.LogError($"TcpClientAdapter.OnReceived: {ex}"); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"TcpClientAdapter.OnError: {ex}"); }
         }
 
         void ISocketAdapter.Send(byte[] buf) => base.Send(buf);
@@ -203,10 +240,14 @@ namespace AECC.Network.Adapters
 
         protected override void OnReceived(EndPoint endpoint, byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DatagramReceived?.Invoke(endpoint, data);
-            ReceiveAsync();
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DatagramReceived?.Invoke(endpoint, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"UdpServerAdapter.OnReceived: {ex}"); }
+            finally { ReceiveAsync(); }
         }
 
         public void SendTo(EndPoint endpoint, byte[] data) => base.Send(endpoint, data);
@@ -250,26 +291,36 @@ namespace AECC.Network.Adapters
 
         protected override void OnConnected()
         {
-            Connected?.Invoke(this);
-            ReceiveAsync();
+            try
+            {
+                Connected?.Invoke(this);
+                ReceiveAsync();
+            }
+            catch (Exception ex) { NLogger.LogError($"UdpClientAdapter.OnConnected: {ex}"); }
         }
 
         protected override void OnDisconnected()
         {
-            Disconnected?.Invoke(this);
+            try { Disconnected?.Invoke(this); }
+            catch (Exception ex) { NLogger.LogError($"UdpClientAdapter.OnDisconnected: {ex}"); }
         }
 
         protected override void OnReceived(EndPoint endpoint, byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
-            ReceiveAsync();
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"UdpClientAdapter.OnReceived: {ex}"); }
+            finally { ReceiveAsync(); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"UdpClientAdapter.OnError: {ex}"); }
         }
 
         void ISocketAdapter.Send(byte[] buf) => base.Send(buf);
@@ -290,8 +341,12 @@ namespace AECC.Network.Adapters
     public class WsSessionAdapter : WsSession, ISocketAdapter
     {
         public long Id { get; set; }
-        public new string Address => ((IPEndPoint)Socket?.RemoteEndPoint)?.Address.ToString() ?? "";
-        int ISocketAdapter.Port => ((IPEndPoint)Socket?.RemoteEndPoint)?.Port ?? 0;
+
+        private string _cachedAddress = "";
+        private int _cachedPort;
+
+        public new string Address => _cachedAddress;
+        int ISocketAdapter.Port => _cachedPort;
         public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.WebSocket;
 
@@ -313,32 +368,64 @@ namespace AECC.Network.Adapters
             _serverRef = server;
         }
 
+        private void CacheEndpoint()
+        {
+            if (Socket?.RemoteEndPoint is IPEndPoint ep)
+            {
+                _cachedAddress = ep.Address.ToString();
+                _cachedPort = ep.Port;
+            }
+        }
+
         public override void OnWsConnected(HttpRequest request)
         {
-            Connected?.Invoke(this);
-            _serverRef.RaiseClientConnected(this);
+            try
+            {
+                CacheEndpoint();
+                Connected?.Invoke(this);
+                _serverRef.RaiseClientConnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"WsSessionAdapter.OnWsConnected: {ex}"); }
         }
 
         public override void OnWsDisconnected()
         {
-            Disconnected?.Invoke(this);
-            _serverRef.RaiseClientDisconnected(this);
+            try
+            {
+                Disconnected?.Invoke(this);
+                _serverRef.RaiseClientDisconnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"WsSessionAdapter.OnWsDisconnected: {ex}"); }
         }
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"WsSessionAdapter.OnWsReceived: {ex}"); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"WsSessionAdapter.OnError: {ex}"); }
         }
 
-        void ISocketAdapter.Send(byte[] buf) => base.SendBinaryAsync(buf);
-        void ISocketAdapter.SendAsync(byte[] buf) => base.SendBinaryAsync(buf);
+        void ISocketAdapter.Send(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WsSessionAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+        }
+
+        void ISocketAdapter.SendAsync(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WsSessionAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+        }
         void ISocketAdapter.Connect() { }
         void ISocketAdapter.Disconnect() => base.Disconnect();
         void ISocketAdapter.Reconnect() { }
@@ -415,26 +502,35 @@ namespace AECC.Network.Adapters
         /// </summary>
         public override void OnWsConnecting(HttpRequest request)
         {
-            request.SetBegin("GET", "/");
-            request.SetHeader("Host", $"{Address}:{_port}");
-            request.SetHeader("Origin", $"http://{Address}");
-            request.SetHeader("Upgrade", "websocket");
-            request.SetHeader("Connection", "Upgrade");
-            request.SetHeader("Sec-WebSocket-Key", Convert.ToBase64String(WsNonce));
-            request.SetHeader("Sec-WebSocket-Version", "13");
-            request.SetBody();
+            try
+            {
+                request.SetBegin("GET", "/");
+                request.SetHeader("Host", $"{Address}:{_port}");
+                request.SetHeader("Origin", $"http://{Address}");
+                request.SetHeader("Upgrade", "websocket");
+                request.SetHeader("Connection", "Upgrade");
+                request.SetHeader("Sec-WebSocket-Key", Convert.ToBase64String(WsNonce));
+                request.SetHeader("Sec-WebSocket-Version", "13");
+                request.SetBody();
+            }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsConnecting: {ex}"); }
         }
 
         public override void OnWsConnected(HttpResponse response)
         {
-            _wsConnected = true;
-            Connected?.Invoke(this);
+            try
+            {
+                _wsConnected = true;
+                Connected?.Invoke(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsConnected: {ex}"); }
         }
 
         public override void OnWsDisconnected()
         {
             _wsConnected = false;
-            Disconnected?.Invoke(this);
+            try { Disconnected?.Invoke(this); }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsDisconnected: {ex}"); }
         }
 
         /// <summary>
@@ -445,18 +541,33 @@ namespace AECC.Network.Adapters
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsReceived: {ex}"); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnError: {ex}"); }
         }
 
-        void ISocketAdapter.Send(byte[] buf) => base.SendBinaryAsync(buf);
-        void ISocketAdapter.SendAsync(byte[] buf) => base.SendBinaryAsync(buf);
+        void ISocketAdapter.Send(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WsClientAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+        }
+
+        void ISocketAdapter.SendAsync(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WsClientAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+        }
+
         void ISocketAdapter.Connect() => base.ConnectAsync();
         void ISocketAdapter.Disconnect() => base.DisconnectAsync();
         void ISocketAdapter.Reconnect() => base.ReconnectAsync();
@@ -473,8 +584,12 @@ namespace AECC.Network.Adapters
     public class WssSessionAdapter : WssSession, ISocketAdapter
     {
         public long Id { get; set; }
-        public new string Address => ((IPEndPoint)Socket?.RemoteEndPoint)?.Address.ToString() ?? "";
-        int ISocketAdapter.Port => ((IPEndPoint)Socket?.RemoteEndPoint)?.Port ?? 0;
+
+        private string _cachedAddress = "";
+        private int _cachedPort;
+
+        public new string Address => _cachedAddress;
+        int ISocketAdapter.Port => _cachedPort;
         public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.WebSocketSecure;
 
@@ -496,32 +611,64 @@ namespace AECC.Network.Adapters
             _serverRef = server;
         }
 
+        private void CacheEndpoint()
+        {
+            if (Socket?.RemoteEndPoint is IPEndPoint ep)
+            {
+                _cachedAddress = ep.Address.ToString();
+                _cachedPort = ep.Port;
+            }
+        }
+
         public override void OnWsConnected(HttpRequest request)
         {
-            Connected?.Invoke(this);
-            _serverRef.RaiseClientConnected(this);
+            try
+            {
+                CacheEndpoint();
+                Connected?.Invoke(this);
+                _serverRef.RaiseClientConnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"WssSessionAdapter.OnWsConnected: {ex}"); }
         }
 
         public override void OnWsDisconnected()
         {
-            Disconnected?.Invoke(this);
-            _serverRef.RaiseClientDisconnected(this);
+            try
+            {
+                Disconnected?.Invoke(this);
+                _serverRef.RaiseClientDisconnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"WssSessionAdapter.OnWsDisconnected: {ex}"); }
         }
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"WssSessionAdapter.OnWsReceived: {ex}"); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"WssSessionAdapter.OnError: {ex}"); }
         }
 
-        void ISocketAdapter.Send(byte[] buf) => base.SendBinaryAsync(buf);
-        void ISocketAdapter.SendAsync(byte[] buf) => base.SendBinaryAsync(buf);
+        void ISocketAdapter.Send(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WssSessionAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+        }
+
+        void ISocketAdapter.SendAsync(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WssSessionAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+        }
         void ISocketAdapter.Connect() { }
         void ISocketAdapter.Disconnect() => base.Disconnect();
         void ISocketAdapter.Reconnect() { }
@@ -598,26 +745,35 @@ namespace AECC.Network.Adapters
         /// </summary>
         public override void OnWsConnecting(HttpRequest request)
         {
-            request.SetBegin("GET", "/");
-            request.SetHeader("Host", $"{Address}:{_port}");
-            request.SetHeader("Origin", $"https://{Address}");
-            request.SetHeader("Upgrade", "websocket");
-            request.SetHeader("Connection", "Upgrade");
-            request.SetHeader("Sec-WebSocket-Key", Convert.ToBase64String(WsNonce));
-            request.SetHeader("Sec-WebSocket-Version", "13");
-            request.SetBody();
+            try
+            {
+                request.SetBegin("GET", "/");
+                request.SetHeader("Host", $"{Address}:{_port}");
+                request.SetHeader("Origin", $"https://{Address}");
+                request.SetHeader("Upgrade", "websocket");
+                request.SetHeader("Connection", "Upgrade");
+                request.SetHeader("Sec-WebSocket-Key", Convert.ToBase64String(WsNonce));
+                request.SetHeader("Sec-WebSocket-Version", "13");
+                request.SetBody();
+            }
+            catch (Exception ex) { NLogger.LogError($"WssClientAdapter.OnWsConnecting: {ex}"); }
         }
 
         public override void OnWsConnected(HttpResponse response)
         {
-            _wsConnected = true;
-            Connected?.Invoke(this);
+            try
+            {
+                _wsConnected = true;
+                Connected?.Invoke(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsConnected: {ex}"); }
         }
 
         public override void OnWsDisconnected()
         {
             _wsConnected = false;
-            Disconnected?.Invoke(this);
+            try { Disconnected?.Invoke(this); }
+            catch (Exception ex) { NLogger.LogError($"WsClientAdapter.OnWsDisconnected: {ex}"); }
         }
 
         /// <summary>
@@ -628,18 +784,32 @@ namespace AECC.Network.Adapters
 
         public override void OnWsReceived(byte[] buffer, long offset, long size)
         {
-            var data = new byte[size];
-            System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
-            DataReceived?.Invoke(this, data);
+            try
+            {
+                var data = new byte[size];
+                System.Buffer.BlockCopy(buffer, (int)offset, data, 0, (int)size);
+                DataReceived?.Invoke(this, data);
+            }
+            catch (Exception ex) { NLogger.LogError($"WssClientAdapter.OnWsReceived: {ex}"); }
         }
 
         protected override void OnError(SocketError error)
         {
-            ErrorOccurred?.Invoke(this, new SocketException((int)error));
+            try { ErrorOccurred?.Invoke(this, new SocketException((int)error)); }
+            catch (Exception ex) { NLogger.LogError($"WssClientAdapter.OnError: {ex}"); }
         }
 
-        void ISocketAdapter.Send(byte[] buf) => base.SendBinaryAsync(buf);
-        void ISocketAdapter.SendAsync(byte[] buf) => base.SendBinaryAsync(buf);
+        void ISocketAdapter.Send(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WssClientAdapter.Send: SendBinaryAsync returned false (socket {Id})");
+        }
+
+        void ISocketAdapter.SendAsync(byte[] buf)
+        {
+            if (!base.SendBinaryAsync(buf))
+                NLogger.LogError($"WssClientAdapter.SendAsync: SendBinaryAsync returned false (socket {Id})");
+        }
         void ISocketAdapter.Connect() => base.ConnectAsync();
         void ISocketAdapter.Disconnect() => base.DisconnectAsync();
         void ISocketAdapter.Reconnect() => base.ReconnectAsync();
@@ -656,8 +826,12 @@ namespace AECC.Network.Adapters
     public class HttpSessionAdapter : HttpSession, ISocketAdapter
     {
         public long Id { get; set; }
-        public new string Address => ((IPEndPoint)Socket?.RemoteEndPoint)?.Address.ToString() ?? "";
-        int ISocketAdapter.Port => ((IPEndPoint)Socket?.RemoteEndPoint)?.Port ?? 0;
+
+        private string _cachedAddress = "";
+        private int _cachedPort;
+
+        public new string Address => _cachedAddress;
+        int ISocketAdapter.Port => _cachedPort;
         public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.HTTP;
 
@@ -679,31 +853,57 @@ namespace AECC.Network.Adapters
             _serverRef = server;
         }
 
+        private void CacheEndpoint()
+        {
+            if (Socket?.RemoteEndPoint is IPEndPoint ep)
+            {
+                _cachedAddress = ep.Address.ToString();
+                _cachedPort = ep.Port;
+            }
+        }
+
         protected override void OnReceivedRequest(HttpRequest request)
         {
-            if (request.Method == "POST" && request.Url == "/event")
+            try
             {
-                var body = new byte[request.BodyLength];
-                System.Buffer.BlockCopy(request.BodyBytes, 0, body, 0, (int)request.BodyLength);
-                DataReceived?.Invoke(this, body);
-                SendResponseAsync(Response.MakeOkResponse());
+                if (request.Method == "POST" && request.Url == "/event")
+                {
+                    var body = new byte[request.BodyLength];
+                    System.Buffer.BlockCopy(request.BodyBytes, 0, body, 0, (int)request.BodyLength);
+                    DataReceived?.Invoke(this, body);
+                    SendResponseAsync(Response.MakeOkResponse());
+                }
+                else
+                {
+                    SendResponseAsync(Response.MakeErrorResponse(404));
+                }
             }
-            else
+            catch (Exception ex)
             {
-                SendResponseAsync(Response.MakeErrorResponse(404));
+                NLogger.LogError($"HttpSessionAdapter.OnReceivedRequest: {ex}");
+                try { SendResponseAsync(Response.MakeErrorResponse(500)); } catch { }
             }
         }
 
         protected override void OnConnected()
         {
-            Connected?.Invoke(this);
-            _serverRef.RaiseClientConnected(this);
+            try
+            {
+                CacheEndpoint();
+                Connected?.Invoke(this);
+                _serverRef.RaiseClientConnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"HttpSessionAdapter.OnConnected: {ex}"); }
         }
 
         protected override void OnDisconnected()
         {
-            Disconnected?.Invoke(this);
-            _serverRef.RaiseClientDisconnected(this);
+            try
+            {
+                Disconnected?.Invoke(this);
+                _serverRef.RaiseClientDisconnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"HttpSessionAdapter.OnDisconnected: {ex}"); }
         }
 
         void ISocketAdapter.Send(byte[] buf)
@@ -760,8 +960,12 @@ namespace AECC.Network.Adapters
     public class HttpsSessionAdapter : HttpsSession, ISocketAdapter
     {
         public long Id { get; set; }
-        public new string Address => ((IPEndPoint)Socket?.RemoteEndPoint)?.Address.ToString() ?? "";
-        int ISocketAdapter.Port => ((IPEndPoint)Socket?.RemoteEndPoint)?.Port ?? 0;
+
+        private string _cachedAddress = "";
+        private int _cachedPort;
+
+        public new string Address => _cachedAddress;
+        int ISocketAdapter.Port => _cachedPort;
         public new bool IsConnected => base.IsConnected;
         public NetworkProtocol Protocol => NetworkProtocol.HTTPS;
 
@@ -783,31 +987,57 @@ namespace AECC.Network.Adapters
             _serverRef = server;
         }
 
+        private void CacheEndpoint()
+        {
+            if (Socket?.RemoteEndPoint is IPEndPoint ep)
+            {
+                _cachedAddress = ep.Address.ToString();
+                _cachedPort = ep.Port;
+            }
+        }
+
         protected override void OnReceivedRequest(HttpRequest request)
         {
-            if (request.Method == "POST" && request.Url == "/event")
+            try
             {
-                var body = new byte[request.BodyLength];
-                System.Buffer.BlockCopy(request.BodyBytes, 0, body, 0, (int)request.BodyLength);
-                DataReceived?.Invoke(this, body);
-                SendResponseAsync(Response.MakeOkResponse());
+                if (request.Method == "POST" && request.Url == "/event")
+                {
+                    var body = new byte[request.BodyLength];
+                    System.Buffer.BlockCopy(request.BodyBytes, 0, body, 0, (int)request.BodyLength);
+                    DataReceived?.Invoke(this, body);
+                    SendResponseAsync(Response.MakeOkResponse());
+                }
+                else
+                {
+                    SendResponseAsync(Response.MakeErrorResponse(404));
+                }
             }
-            else
+            catch (Exception ex)
             {
-                SendResponseAsync(Response.MakeErrorResponse(404));
+                NLogger.LogError($"HttpSessionAdapter.OnReceivedRequest: {ex}");
+                try { SendResponseAsync(Response.MakeErrorResponse(500)); } catch { }
             }
         }
 
         protected override void OnConnected()
         {
-            Connected?.Invoke(this);
-            _serverRef.RaiseClientConnected(this);
+            try
+            {
+                CacheEndpoint();
+                Connected?.Invoke(this);
+                _serverRef.RaiseClientConnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"HttpSessionAdapter.OnConnected: {ex}"); }
         }
 
         protected override void OnDisconnected()
         {
-            Disconnected?.Invoke(this);
-            _serverRef.RaiseClientDisconnected(this);
+            try
+            {
+                Disconnected?.Invoke(this);
+                _serverRef.RaiseClientDisconnected(this);
+            }
+            catch (Exception ex) { NLogger.LogError($"HttpSessionAdapter.OnDisconnected: {ex}"); }
         }
 
         void ISocketAdapter.Send(byte[] buf)

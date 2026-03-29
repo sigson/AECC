@@ -81,6 +81,13 @@ namespace AECC.Network
         /// <summary>Client-side: true if identity handshake is complete.</summary>
         public bool ClientIsReady { get; private set; }
 
+        /// <summary>
+        /// Client-side: true after sending RestoreId, cleared on RestoreAccepted or
+        /// when the server rejects the restore (assigns a new ID instead).
+        /// Used to ignore the stale AssignId that crosses on the wire with our RestoreId.
+        /// </summary>
+        private bool _pendingRestore;
+
         private readonly bool _isServer;
         private readonly Action<ISocketAdapter, SocketReadyReason> _onSocketReady;
         private readonly Action<ISocketAdapter> _onSocketDisconnected;
@@ -133,20 +140,26 @@ namespace AECC.Network
         {
             _pendingSockets.TryRemove(socket, out _);
 
-            // Find and remove from confirmed (but keep the ID reserved for potential reconnect)
+            // Find in confirmed sockets — keep the ID reserved for potential reconnect.
             // The entry stays in ConfirmedSockets for reconnection window.
             // A cleanup timer can remove stale entries.
+            bool wasConfirmed = false;
             foreach (var kvp in ConfirmedSockets)
             {
                 if (kvp.Value.Socket == socket)
                 {
                     kvp.Value.State = SocketState.PendingIdentity;
                     kvp.Value.Socket = null;
+                    wasConfirmed = true;
                     break;
                 }
             }
 
-            _onSocketDisconnected?.Invoke(socket);
+            // Only fire disconnect callback for sockets that completed the identity handshake.
+            // Pending sockets (never confirmed) should not generate disconnect events —
+            // business logic never received a connect event for them.
+            if (wasConfirmed)
+                _onSocketDisconnected?.Invoke(socket);
         }
 
         /// <summary>
@@ -172,6 +185,13 @@ namespace AECC.Network
 
                         // Flush queued messages
                         FlushPendingMessages(entry);
+                    }
+                    else if (socket.Id != 0)
+                    {
+                        // Socket was already promoted to Ready via RestoreId.
+                        // This ConfirmId is a stale response to the AssignId that
+                        // crossed on the wire with the client's RestoreId — ignore it.
+                        NLogger.LogNetwork($"Ignoring stale ConfirmId {confirmedId} for socket already identified as {socket.Id}");
                     }
                     else
                     {
@@ -253,7 +273,12 @@ namespace AECC.Network
             if (ClientAssignedId != 0)
             {
                 // Reconnecting — send our stored ID
+                _pendingRestore = true;
                 SendSystemMessage(socket, MessageType.RestoreId, BitConverter.GetBytes(ClientAssignedId));
+            }
+            else
+            {
+                _pendingRestore = false;
             }
             // Otherwise, wait for server to send AssignId
         }
@@ -269,6 +294,17 @@ namespace AECC.Network
                 case MessageType.AssignId:
                 {
                     long id = BitConverter.ToInt64(payload, 0);
+
+                    if (_pendingRestore)
+                    {
+                        // We sent RestoreId and this AssignId crossed on the wire.
+                        // Ignore it — we'll get either RestoreAccepted (restore worked)
+                        // or a second AssignId (restore rejected, server assigned new ID).
+                        _pendingRestore = false;
+                        NLogger.LogNetwork($"Client ignoring stale AssignId {id} — restore in progress.");
+                        return true;
+                    }
+
                     ClientAssignedId = id;
                     socket.Id = id;
 
@@ -284,6 +320,7 @@ namespace AECC.Network
                 case MessageType.RestoreAccepted:
                 {
                     long id = BitConverter.ToInt64(payload, 0);
+                    _pendingRestore = false;
                     socket.Id = id;
                     ClientIsReady = true;
 
@@ -311,13 +348,20 @@ namespace AECC.Network
 
         private void SendSystemMessage(ISocketAdapter socket, byte msgType, byte[] payload)
         {
-            byte[] frame;
-            if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
-                frame = StreamFrameAccumulator.Pack(msgType, payload);
-            else
-                frame = DatagramFrame.Pack(msgType, payload);
+            try
+            {
+                byte[] frame;
+                if (ProtocolTraits.UsesStreamFraming(socket.Protocol))
+                    frame = StreamFrameAccumulator.Pack(msgType, payload);
+                else
+                    frame = DatagramFrame.Pack(msgType, payload);
 
-            socket.SendAsync(frame);
+                socket.SendAsync(frame);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError($"SocketIdentityManager: SendSystemMessage(0x{msgType:X2}) failed for socket {socket.Id}: {ex.Message}");
+            }
         }
 
         /// <summary>
