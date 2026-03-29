@@ -9,7 +9,7 @@ namespace AECC.Network
 {
     /// <summary>
     /// Simplified event manager. Events are one-shot:
-    ///   - Network-bound events are serialized and routed to NetworkService for dispatch.
+    ///   - Network-bound events are serialized and routed to NetworkingInstance for dispatch.
     ///   - Local events have Execute() called immediately.
     ///   - Events arriving from the network have Execute() called after deserialization.
     ///
@@ -30,12 +30,12 @@ namespace AECC.Network
         // ── Malicious scoring (carried over from original) ──
         public ConcurrentDictionary<long, ScoreObject> MaliciousScoringStorage = new();
 
-        // ── Reference to network service for sending ──
-        private NetworkService _networkService;
+        // ── Reference to networking instance for sending ──
+        private NetworkingInstance _networkingInstance;
 
-        public void Initialize(NetworkService networkService)
+        public void Initialize(NetworkingInstance networkingInstance)
         {
-            _networkService = networkService;
+            _networkingInstance = networkingInstance;
         }
 
         /// <summary>
@@ -80,7 +80,7 @@ namespace AECC.Network
             if (evt.IsNetworkBound)
             {
                 // Network-bound: serialize and send. Do NOT call Execute().
-                _networkService.SendEvent(evt);
+                _networkingInstance.SendEvent(evt);
             }
             else
             {
@@ -100,7 +100,7 @@ namespace AECC.Network
         }
 
         /// <summary>
-        /// Called by NetworkService when a network event arrives.
+        /// Called by NetworkingInstance when a network event arrives.
         /// SocketSource is already set. Destination fields are null (this is an incoming event).
         /// </summary>
         internal void DispatchFromNetwork(NetworkEvent evt, ISocketAdapter source)
