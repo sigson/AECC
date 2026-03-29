@@ -21,6 +21,7 @@ namespace AECC.Core
             }
             return SingletonFallback;
         };
+        public static Func<ISerializationAdapter> GetSerializationAdapter = () => new DummySerializationAdapter();
         public static Func<IDictionary<long, ECSWorld>> GetAllWorlds = () => new Dictionary<long, ECSWorld>() { {GetSingletonFallback().instanceId, GetSingletonFallback()} };
         public static Func<long, ECSWorld> GetWorld = (long instance) => GetSingletonFallback();
         public static Func<long, ECSWorld> GetEntityWorld = (long entityinstance) => GetSingletonFallback();
@@ -43,11 +44,12 @@ namespace AECC.Core
         }
         public WorldTypeEnum WorldType = WorldTypeEnum.Offline;
         public EntityNetSerializer EntityWorldSerializer = new EntityNetSerializer();
-        public ISerializationAdapter serializationAdapter = new DummySerializationAdapter();
+        public ISerializationAdapter serializationAdapter = null;
         
         public void InitWorldScope(Func<Type, bool> staticContractFiltering)
         {
             SingletonFallback = this;
+            serializationAdapter = GetSerializationAdapter();
             EntityWorldSerializer.InitSerialize(this, serializationAdapter);
             entityManager = new ECSEntityManager(this);
             componentManager = new ECSComponentManager(this);

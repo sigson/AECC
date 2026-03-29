@@ -41,6 +41,7 @@ namespace TestServer
             //  ШАГ 1: Регистрация всех сервисов (автоматически через рефлексию)
             // =====================================================
             Console.WriteLine("\n[1] RegisterAllServices()...");
+            ECSWorld.GetSerializationAdapter = () => new AECC.Harness.Serialization.SerializationAdapter();
             IService.RegisterAllServices();
 
             // =====================================================
@@ -136,12 +137,6 @@ namespace TestServer
             _serverWorld = ECSService.instance.GetWorld();
             _serverWorld.WorldType = ECSWorld.WorldTypeEnum.Server;
             _serverWorld.WorldMetaData = "TestServerWorld";
-
-            // Подключаем сериализатор (JSON через Newtonsoft.Json при AOTMode)
-            _serverWorld.EntityWorldSerializer = new EntityNetSerializer();
-            _serverWorld.EntityWorldSerializer.InitSerialize(
-                _serverWorld,
-                new AECC.Harness.Serialization.SerializationAdapter());
 
             Console.WriteLine($"  [World] ID: {_serverWorld.instanceId}");
             Console.WriteLine($"  [World] Type: {_serverWorld.WorldType}");
