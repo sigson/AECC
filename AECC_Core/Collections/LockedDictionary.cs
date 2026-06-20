@@ -29,6 +29,39 @@ namespace AECC.Collections
         public bool LockValue { get; set; } = false;
         private readonly RWLock GlobalLocker = new RWLock();
 
+        // ====== LOCKDOWN ======
+        // volatile, чтобы установка/снятие были немедленно видны во всех потоках.
+        // Дополнительно — переключение происходит под GlobalLocker.WriteLock,
+        // поэтому ни одна add/change-операция (которая работает под ReadLock)
+        // не может "пересечь" момент переключения.
+        private volatile bool _lockdown = false;
+        public bool IsLockdown => _lockdown;
+
+        /// <summary>
+        /// Переводит словарь в режим lockdown. После вызова любые попытки
+        /// добавить или изменить элемент (включая Unsafe*) будут немедленно
+        /// возвращать false. Get* и Remove* продолжают работать нормально.
+        /// </summary>
+        public void EnterLockdown()
+        {
+            using (GlobalLocker.WriteLock())
+            {
+                _lockdown = true;
+            }
+        }
+
+        /// <summary>
+        /// Снимает режим lockdown.
+        /// </summary>
+        public void ExitLockdown()
+        {
+            using (GlobalLocker.WriteLock())
+            {
+                _lockdown = false;
+            }
+        }
+        // ====== /LOCKDOWN ======
+
         public LockedDictionary(bool preserveLockingKeys = false)
         {
             HoldKeys = preserveLockingKeys;
@@ -47,6 +80,14 @@ namespace AECC.Collections
             oldValue = default(TValue);
             using (GlobalLocker.ReadLock())
             {
+                // LOCKDOWN: запрещаем любые add/change немедленно.
+                // Проверка под ReadLock — гарантирует, что Enter/ExitLockdown
+                // (которые берут WriteLock) не могут переключить флаг во время операции.
+                if (_lockdown)
+                {
+                    return false;
+                }
+
                 checkagain:
                 RWLock.LockToken token = null;
                 LockedValue dvalue = null;
@@ -289,6 +330,9 @@ namespace AECC.Collections
         public bool HoldKey(TKey key, out RWLock.LockToken lockToken, bool holdMode = true)
         {
             lockToken = null;
+            if (_lockdown)
+                return false;
+
             if (HoldKeys)
             {
                 KeysHoldingStorage.TryAddChangeLockedElement(key, false, true, out var rdlockToken, false);
@@ -536,6 +580,8 @@ namespace AECC.Collections
 
         public bool UnsafeAdd(TKey key, TValue value)
         {
+            // LOCKDOWN: даже Unsafe* подчиняются режиму lockdown.
+            if (_lockdown) return false;
             if(this.dictionary.ContainsKey(key)) return false;
             return this.dictionary.TryAdd(key, new LockedValue(){Value = value, lockValue = new RWLock()});
         }
@@ -553,6 +599,8 @@ namespace AECC.Collections
 
         public bool UnsafeChange(TKey key, TValue value)
         {
+            // LOCKDOWN: изменение запрещено.
+            if (_lockdown) return false;
             if(this.dictionary.TryGetValue(key, out var oldvalue))
             {
                 oldvalue.Value = value;
@@ -571,6 +619,8 @@ namespace AECC.Collections
 
         public void UnsafeAdd(KeyValuePair<TKey, TValue> item)
         {
+            // LOCKDOWN: запрет на добавление.
+            if (_lockdown) return;
             this.dictionary.TryAdd(item.Key, new LockedValue(){Value = item.Value, lockValue = new RWLock()});
         }
 

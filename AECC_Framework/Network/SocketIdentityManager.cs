@@ -42,7 +42,7 @@ namespace AECC.Network
         public long AssignedId;
         public SocketState State = SocketState.PendingIdentity;
         public ISocketAdapter Socket;
-        public ConcurrentQueue<byte[]> PendingMessages = new();
+        public ConcurrentQueue<byte[]> PendingMessages = new ConcurrentQueue<byte[]>();
     }
 
     /// <summary>
@@ -68,12 +68,12 @@ namespace AECC.Network
         /// Server-side confirmed sockets: AssignedId → SocketIdentityEntry.
         /// Only contains fully confirmed sockets.
         /// </summary>
-        public ConcurrentDictionary<long, SocketIdentityEntry> ConfirmedSockets = new();
+        public ConcurrentDictionary<long, SocketIdentityEntry> ConfirmedSockets = new ConcurrentDictionary<long, SocketIdentityEntry>();
 
         /// <summary>
         /// Pending (not yet confirmed) sockets, keyed by the transport-level socket reference.
         /// </summary>
-        private ConcurrentDictionary<ISocketAdapter, SocketIdentityEntry> _pendingSockets = new();
+        private ConcurrentDictionary<ISocketAdapter, SocketIdentityEntry> _pendingSockets = new ConcurrentDictionary<ISocketAdapter, SocketIdentityEntry>();
 
         /// <summary>Client-side: the ID assigned to us by the server.</summary>
         public long ClientAssignedId { get; private set; }

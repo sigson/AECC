@@ -50,7 +50,7 @@ namespace AECC.Network
     /// </summary>
     public class StreamFrameAccumulator
     {
-        private readonly List<byte> _buffer = new();
+        private readonly List<byte> _buffer = new List<byte>();
         private const int HeaderSize = 5; // 4 (length) + 1 (type)
 
         /// <summary>

@@ -55,10 +55,10 @@ namespace AECC.Network
         public long TargetSocketId;
 
         /// <summary>Level-0 events — must go out ASAP.</summary>
-        public ConcurrentQueue<byte[]> HotQueue = new();
+        public ConcurrentQueue<byte[]> HotQueue = new ConcurrentQueue<byte[]>();
 
         /// <summary>Level-1 events — can be batched.</summary>
-        public ConcurrentQueue<byte[]> BatchQueue = new();
+        public ConcurrentQueue<byte[]> BatchQueue = new ConcurrentQueue<byte[]>();
 
         /// <summary>
         /// UTC ticks of the oldest event currently sitting in BatchQueue.
@@ -96,8 +96,8 @@ namespace AECC.Network
     /// </summary>
     public class OutboundBufferHub : IDisposable
     {
-        private readonly ConcurrentDictionary<(NetworkProtocol, string, int), DestinationBuffer> _routeBuffers = new();
-        private readonly ConcurrentDictionary<long, DestinationBuffer> _socketIdBuffers = new();
+        private readonly ConcurrentDictionary<(NetworkProtocol, string, int), DestinationBuffer> _routeBuffers = new ConcurrentDictionary<(NetworkProtocol, string, int), DestinationBuffer>();
+        private readonly ConcurrentDictionary<long, DestinationBuffer> _socketIdBuffers = new ConcurrentDictionary<long, DestinationBuffer>();
 
         private TimerCompat _sweepTimer;
         private readonly Action<NetworkDestination> _connectFactory;

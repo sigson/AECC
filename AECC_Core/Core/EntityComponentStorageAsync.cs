@@ -751,21 +751,51 @@ namespace AECC.Core
 
         public async Task OnEntityDeleteAsync()
         {
-            var removedComponents = await this.componentsAsync.ClearSnapshotAsync();
-            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
-            {    
+            // Снимок ключей без вычищения словаря — иначе сломаем цепочку
+            // ComponentLifecycleState у компонентов, у которых ещё не отыграл
+            // PendingAdd/PendingChanges.
+            await this.componentsAsync.EnterLockdownAsync();
+            List<Type> snapshot;
+            try
+            {
+                var keys = await this.componentsAsync.GetKeysAsync();
+                snapshot = keys.ToList();
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError(ex);
+                snapshot = new List<Type>();
+            }
+
+            foreach (var componentType in snapshot)
+            {
+                try
+                {
+                    await this.RemoveComponentImmediatelyAsync(componentType);
+                }
+                catch (Exception ex)
+                {
+                    NLogger.Log($"OnEntityDeleteAsync: failed to remove component {componentType}");
+                    NLogger.LogError(ex);
+                }
+            }
+
+            // Дочищаем технологические словари — RemoveComponentProcessAsync уже
+            // должен был вынести из них почти всё, это страховка.
+            if ((!Defines.CutClientServerCollections)
+                || (this.entity.ECSWorldOwner == null && !Defines.CutClientServerCollections)
+                || (this.entity.ECSWorldOwner != null
+                    && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline
+                    && !Defines.CutClientServerCollections))
+            {
                 await this.SerializationContainerAsync.ClearAsync();
                 this.RemovedComponents.Clear();
             }
-            if(IdToTypeMode)
+
+            if (IdToTypeMode)
                 this.IdToTypeComponent.Clear();
+
             this.changedComponents.Clear();
-            
-            
-            foreach (var component in removedComponents)
-            {
-                component.Value.OnRemove();
-            }
         }
 
         public async Task<bool> ExecuteOnNotHasComponentAsync(Type componentType, Func<Task> asyncAction)

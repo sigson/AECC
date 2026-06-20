@@ -14,6 +14,29 @@ namespace AECC.Collections
         bool HoldKeys { get; set; }
         bool HoldKeyStorage { get; set; }
         bool LockValue { get; set; }
+
+        /// <summary>
+        /// Возвращает true, если словарь находится в режиме lockdown.
+        /// В этом режиме запрещены любые операции добавления и изменения
+        /// (включая Unsafe*), разрешены только Get* и Remove*.
+        /// </summary>
+        bool IsLockdown { get; }
+        #endregion
+
+        #region Lockdown
+        /// <summary>
+        /// Переводит словарь в режим lockdown. Метод сам берёт GlobalLocker.WriteLock,
+        /// гарантируя, что переключение произойдёт после завершения всех текущих
+        /// операций добавления/изменения и будет видно всем последующим операциям.
+        /// После вызова любые попытки добавить или изменить элемент (включая Unsafe*)
+        /// будут немедленно возвращать false.
+        /// </summary>
+        void EnterLockdown();
+
+        /// <summary>
+        /// Снимает режим lockdown. Метод сам берёт GlobalLocker.WriteLock.
+        /// </summary>
+        void ExitLockdown();
         #endregion
 
         #region Locking and Element Access
@@ -25,26 +48,26 @@ namespace AECC.Collections
         #region Transactional / Delegate Executions
         bool ExecuteOnKeyHolded(TKey key, Action action);
         void ExecuteOnAddLocked(TKey key, TValue value, Action<TKey, TValue> action);
-        
+
         /// <summary>
         /// Выполняет действие при изменении заблокированного элемента.
         /// Action принимает параметры: key, value, oldvalue
         /// </summary>
         void ExecuteOnChangeLocked(TKey key, TValue value, Action<TKey, TValue, TValue> action);
-        
+
         /// <summary>
         /// Выполняет действие при добавлении или изменении элемента.
         /// onAddaction принимает: key, value
         /// onChangeaction принимает: key, value, oldvalue
         /// </summary>
         void ExecuteOnAddOrChangeLocked(TKey key, TValue value, Action<TKey, TValue> onAddaction, Action<TKey, TValue, TValue> onChangeaction);
-        
+
         void ExecuteOnRemoveLocked(TKey key, out TValue value, Action<TKey, TValue> action);
         bool ExecuteOnAddChangeLocked(TKey key, TValue value, Action<TKey, TValue, TValue> action);
-        
+
         void ExecuteReadLocked(TKey key, Action<TKey, TValue> action);
         void ExecuteWriteLocked(TKey key, Action<TKey, TValue> action);
-        
+
         void ExecuteReadLockedContinuously(TKey key, Action<TKey, TValue> action, out RWLock.LockToken token);
         void ExecuteWriteLockedContinuously(TKey key, Action<TKey, TValue> action, out RWLock.LockToken token);
         #endregion

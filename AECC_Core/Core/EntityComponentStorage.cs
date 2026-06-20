@@ -455,6 +455,36 @@ namespace AECC.Core
             return component;
         }
 
+        public ECSComponent GetComponentBroadcastType(Type componentClass)
+        {
+            ECSComponent component = null;
+            try
+            {
+                component = this.components.FirstOrDefault(x => componentClass.IsInstanceOfType(x.Value)).Value;
+            }
+            catch (Exception ex)
+            {
+                if (ex is KeyNotFoundException && Defines.HiddenKeyNotFoundLog)
+                    NLogger.Error(ex.Message + "  \n" + ex.StackTrace);
+            }
+            return component;
+        }
+
+        public IEnumerable<ECSComponent> GetComponentsBroadcastType(Type componentClass)
+        {
+            IEnumerable<ECSComponent> component = null;
+            try
+            {
+                component = this.components.Where(x => componentClass.IsInstanceOfType(x.Value)).Select(x => x.Value);
+            }
+            catch (Exception ex)
+            {
+                if (ex is KeyNotFoundException && Defines.HiddenKeyNotFoundLog)
+                    NLogger.Error(ex.Message + "  \n" + ex.StackTrace);
+            }
+            return component;
+        }
+
         public ECSComponent GetComponent(long componentTypeId)
         {
             ECSComponent component = null;
@@ -791,21 +821,49 @@ namespace AECC.Core
 
         public void OnEntityDelete()
         {
-            var removedComponents = this.components.ClearSnapshot();
-            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            this.components.EnterLockdown();
+            List<Type> snapshot;
+            try
+            {
+                snapshot = this.components.Keys.ToList();
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError(ex);
+                snapshot = new List<Type>();
+            }
+
+            foreach (var componentType in snapshot)
+            {
+                try
+                {
+                    this.RemoveComponentImmediately(componentType);
+                }
+                catch (Exception ex)
+                {
+                    NLogger.Log($"OnEntityDelete: failed to remove component {componentType}");
+                    NLogger.LogError(ex);
+                }
+            }
+
+            // Дочищаем технологические словари. К этому моменту RemoveComponentProcess
+            // уже должен был вынести из них почти всё — это страховка от рассинхрона
+            // и от компонентов, которых не оказалось в основном словаре.
+            if ((!Defines.CutClientServerCollections)
+                || (this.entity.ECSWorldOwner == null && !Defines.CutClientServerCollections)
+                || (this.entity.ECSWorldOwner != null
+                    && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline
+                    && !Defines.CutClientServerCollections))
             {
                 this.SerializationContainer.Clear();
                 this.RemovedComponents.Clear();
             }
-            if(IdToTypeMode)
+
+            if (IdToTypeMode)
                 this.IdToTypeComponent.Clear();
+
             this.changedComponents.Clear();
-            
             this.IdToTypeComponent.Clear();
-            foreach (var component in removedComponents)
-            {
-                component.Value.OnRemove();
-            }
         }
 
         public bool ExecuteOnNotHasComponent(Type componentType, Action action)

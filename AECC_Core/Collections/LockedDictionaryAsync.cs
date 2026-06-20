@@ -36,6 +36,25 @@ namespace AECC.Collections
         // обеспечивающий асинхронную безопасность от гонок.
         private readonly SemaphoreSlim _raceConditionSemaphore = new SemaphoreSlim(1, 1);
 
+        private volatile bool _lockdown = false;
+        public bool IsLockdown => _lockdown;
+
+        public async Task EnterLockdownAsync()
+        {
+            using (await GlobalLocker.WriteLockAsync())
+            {
+                _lockdown = true;
+            }
+        }
+
+        public async Task ExitLockdownAsync()
+        {
+            using (await GlobalLocker.WriteLockAsync())
+            {
+                _lockdown = false;
+            }
+        }
+
         public LockedDictionaryAsync(bool preserveLockingKeys = false)
         {
             HoldKeys = preserveLockingKeys;
@@ -57,6 +76,10 @@ namespace AECC.Collections
 
             using (await GlobalLocker.ReadLockAsync())
             {
+                if (_lockdown)
+                {
+                    return (false, default(TValue), null);
+                }
             checkagain:
                 IDisposable token = null;
                 LockedValue dvalue = null;
@@ -314,6 +337,8 @@ namespace AECC.Collections
 
         public async Task<(bool Success, IDisposable LockToken)> HoldKeyAsync(TKey key, bool holdMode = true)
         {
+            if (_lockdown)
+                return (false, null);
             if (HoldKeys)
             {
                 var holdResult = await KeysHoldingStorage.TryAddChangeLockedElementAsync(key, false, true, false);
@@ -584,6 +609,7 @@ namespace AECC.Collections
         // Unsafe методы не используют локов GlobalLocker или внутри элемента, поэтому остаются синхронными.
         public bool UnsafeAdd(TKey key, TValue value)
         {
+            if (_lockdown) return false;
             if (this.dictionary.ContainsKey(key)) return false;
             return this.dictionary.TryAdd(key, new LockedValue() { Value = value, lockValue = new RWLockAsync() });
         }
@@ -601,6 +627,7 @@ namespace AECC.Collections
 
         public bool UnsafeChange(TKey key, TValue value)
         {
+            if (_lockdown) return false;
             if (this.dictionary.TryGetValue(key, out var oldvalue))
             {
                 oldvalue.Value = value;
@@ -619,6 +646,7 @@ namespace AECC.Collections
 
         public void UnsafeAdd(KeyValuePair<TKey, TValue> item)
         {
+            if (_lockdown) return;
             this.dictionary.TryAdd(item.Key, new LockedValue() { Value = item.Value, lockValue = new RWLockAsync() });
         }
 

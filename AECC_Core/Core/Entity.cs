@@ -577,6 +577,15 @@ namespace AECC.Core
         public T GetComponent<T>() where T : ECSComponent =>
             (T)this.GetComponent(typeof(T));
 
+        public T GetComponentBroadcastType<T>() where T : ECSComponent
+        {
+            return (T)this.entityComponents.GetComponentBroadcastType(typeof(T));
+        }
+
+        public IEnumerable<T> GetComponentsBroadcastType<T>() where T : ECSComponent
+        {
+            return this.entityComponents.GetComponentsBroadcastType(typeof(T)).Cast<T>();
+        }
 		
 
         public T TryGetComponent<T>() where T : ECSComponent

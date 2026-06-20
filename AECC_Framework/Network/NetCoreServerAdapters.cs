@@ -40,7 +40,7 @@ namespace AECC.Network.Adapters
         private readonly TcpServerAdapter _serverRef;
 
         // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
-        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new ConcurrentQueue<byte[]>();
         private int _draining;
 
         public TcpSessionAdapter(TcpServerAdapter server) : base(server)
@@ -193,7 +193,7 @@ namespace AECC.Network.Adapters
         private readonly int _port;
 
         // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
-        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new ConcurrentQueue<byte[]>();
         private int _draining;
 
         public TcpClientAdapter(string address, int port, int bufferSize)
@@ -438,7 +438,7 @@ namespace AECC.Network.Adapters
         // in-flight (_sending == true). This happens during OnWsConnected because the
         // HTTP 101 response is still being sent. Without the queue, the AssignId packet
         // (and any other send during contention) would be silently dropped.
-        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new ConcurrentQueue<byte[]>();
         private int _draining;
 
         public WsSessionAdapter(WsServerAdapter server) : base(server)
@@ -603,7 +603,7 @@ namespace AECC.Network.Adapters
         private volatile bool _wsConnected;
 
         // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
-        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new ConcurrentQueue<byte[]>();
         private int _draining;
 
         public WsClientAdapter(string address, int port, int bufferSize)
@@ -754,7 +754,7 @@ namespace AECC.Network.Adapters
         private readonly WssServerAdapter _serverRef;
 
         // ── Send queue: same rationale as WsSessionAdapter ──
-        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new ConcurrentQueue<byte[]>();
         private int _draining;
 
         public WssSessionAdapter(WssServerAdapter server) : base(server)
@@ -912,7 +912,7 @@ namespace AECC.Network.Adapters
         private volatile bool _wsConnected;
 
         // ── Send queue: holds frames that couldn't be sent because the socket was busy ──
-        private readonly ConcurrentQueue<byte[]> _pendingSends = new();
+        private readonly ConcurrentQueue<byte[]> _pendingSends = new ConcurrentQueue<byte[]>();
         private int _draining;
 
         public WssClientAdapter(SslContext context, string address, int port, int bufferSize)

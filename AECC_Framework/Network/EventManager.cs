@@ -23,12 +23,12 @@ namespace AECC.Network
         public bool DebugTracing = false;
 
         /// <summary>Debug trace buffer. Only populated when DebugTracing == true.</summary>
-        public ConcurrentQueue<(long SocketId, long EventId, string TypeName)> DebugTrace = new();
+        public ConcurrentQueue<(long SocketId, long EventId, string TypeName)> DebugTrace = new ConcurrentQueue<(long SocketId, long EventId, string TypeName)>();
 
         private const int MaxDebugTraceSize = 10000;
 
         // ── Malicious scoring (carried over from original) ──
-        public ConcurrentDictionary<long, ScoreObject> MaliciousScoringStorage = new();
+        public ConcurrentDictionary<long, ScoreObject> MaliciousScoringStorage = new ConcurrentDictionary<long, ScoreObject>();
 
         // ── Reference to networking instance for sending ──
         private NetworkingInstance _networkingInstance;

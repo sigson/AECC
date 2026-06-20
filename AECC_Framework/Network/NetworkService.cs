@@ -62,7 +62,7 @@ namespace AECC.Network
         /// The primary instance is always at key "default".
         /// Additional instances can be created via CreateInstance().
         /// </summary>
-        private readonly ConcurrentDictionary<string, NetworkingInstance> _instances = new();
+        private readonly ConcurrentDictionary<string, NetworkingInstance> _instances = new ConcurrentDictionary<string, NetworkingInstance>();
 
         // =====================================================================
         //  Configuration — populate before initialization step
@@ -72,7 +72,7 @@ namespace AECC.Network
         /// Endpoint configs for the primary ("default") instance.
         /// Populate this before the service initialization step runs.
         /// </summary>
-        public List<NetworkDestination> EndpointConfigs = new();
+        public List<NetworkDestination> EndpointConfigs = new List<NetworkDestination>();
 
         // =====================================================================
         //  Convenience proxies (backward compatibility)

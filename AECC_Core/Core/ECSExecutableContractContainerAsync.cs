@@ -558,7 +558,7 @@ namespace AECC.Core
 
                             if (_loggingLevel == ContractLoggingLevel.Verbose)
                             {
-                                NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Condition #{i} failed for Entity {entityid} {(condiex != null ? "with exception: " + condiex.ToString() + "\n/*/*/*/*/*/*/*/*/*/*/*/*/*/\n" + new System.Diagnostics.StackTrace(condiex, true) : "")}");
+                                NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Condition #{i} failed for Entity {entityid} {(condiex != null ? "with exception: " + condiex.ToString() + "\n*************\n" + new System.Diagnostics.StackTrace(condiex, true) : "")}");
                             }
                         }
                     }

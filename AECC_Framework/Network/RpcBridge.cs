@@ -1,3 +1,5 @@
+#if NET5_0_OR_GREATER
+
 using System;
 using System.Buffers;
 using System.IO.Pipelines;
@@ -34,9 +36,9 @@ namespace AECC.Network
         public JsonRpc Rpc { get; private set; }
 
         private readonly ISocketAdapter _socket;
-        private readonly Pipe _incomingPipe = new();
-        private readonly Pipe _outgoingPipe = new();
-        private CancellationTokenSource _cts = new();
+        private readonly Pipe _incomingPipe = new Pipe();
+        private readonly Pipe _outgoingPipe = new Pipe();
+        private CancellationTokenSource _cts = new CancellationTokenSource();
         private Task _pumpTask;
 
         /// <summary>
@@ -154,3 +156,45 @@ namespace AECC.Network
         }
     }
 }
+
+#else // !NET5_0_OR_GREATER — stub implementation
+
+using System;
+using System.Threading.Tasks;
+using AECC.Core.Logging;
+
+namespace AECC.Network
+{
+    /// <summary>
+    /// Stub RpcBridge for runtimes below .NET 5 (e.g. Mono / Godot .NET Standard).
+    /// Exposes the same public API so calling code compiles, but all operations are no-ops.
+    /// Any attempt to invoke RPC will log a warning and return a faulted/default task.
+    /// </summary>
+    public class RpcBridge : IDisposable
+    {
+        public const byte RpcMessageType = 0x20;
+
+        /// <summary>
+        /// Always null in the stub. Callers should null-check or use <see cref="IsSupported"/>.
+        /// </summary>
+        public object Rpc => null;
+
+        /// <summary>
+        /// Returns false on unsupported runtimes. Use this to guard RPC calls at the call site.
+        /// </summary>
+        public static bool IsSupported => false;
+
+        public RpcBridge(ISocketAdapter socket, object rpcTarget = null)
+        {
+            NLogger.Warn("RpcBridge: RPC is not supported on this runtime (requires .NET 5+). Bridge created as no-op stub.");
+        }
+
+        public void Start() { }
+
+        public void FeedIncoming(byte[] data) { }
+
+        public void Dispose() { }
+    }
+}
+
+#endif

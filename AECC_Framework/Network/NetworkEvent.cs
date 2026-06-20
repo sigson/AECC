@@ -198,10 +198,10 @@ namespace AECC.Network
     /// </summary>
     public static class NetworkEventRegistry
     {
-        private static readonly ConcurrentDictionary<int, Type> _idToType = new();
-        private static readonly ConcurrentDictionary<Type, int> _typeToId = new();
+        private static readonly ConcurrentDictionary<int, Type> _idToType = new ConcurrentDictionary<int, Type>();
+        private static readonly ConcurrentDictionary<Type, int> _typeToId = new ConcurrentDictionary<Type, int>();
         private static volatile bool _initialized;
-        private static readonly object _lock = new();
+        private static readonly object _lock = new object();
 
         /// <summary>
         /// Ensure the registry is populated. Safe to call multiple times.

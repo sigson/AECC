@@ -1,15 +1,19 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.Threading;
 using AECC.Core.Logging;
+
+#if NET5_0_OR_GREATER
+using Microsoft.VisualStudio.Threading;
+#endif
 
 public class RWLockAsync : IDisposable
 {
+#if NET5_0_OR_GREATER
+
     private readonly AsyncReaderWriterLock _lockObj;
     private readonly bool _isMockMode;
 
-    // Пустышка для безопасного выхода из using, если лок не был получен из-за ошибки
     private struct DummyDisposable : IDisposable
     {
         public void Dispose() { }
@@ -17,7 +21,6 @@ public class RWLockAsync : IDisposable
 
     public RWLockAsync()
     {
-        // Поддержка ваших старых флагов компиляции/настроек
         if (Defines.OneThreadMode)
         {
             _isMockMode = true;
@@ -28,28 +31,20 @@ public class RWLockAsync : IDisposable
         }
     }
 
-    /// <summary>
-    /// Асинхронное получение блокировки на чтение.
-    /// Использование: using (await rwlock.ReadLockAsync()) { ... }
-    /// </summary>
     public async ValueTask<IDisposable> ReadLockAsync(CancellationToken cancellationToken = default)
     {
         if (_isMockMode) return new DummyDisposable();
 
-        // Проверка из вашей старой логики.
-        // Примечание: AsyncReaderWriterLock на самом деле БЕЗОПАСНО позволяет брать лок на чтение 
-        // внутри лока на запись, но мы оставляем эту проверку для сохранения старого поведения.
         if (_lockObj.IsWriteLockHeld)
         {
             if (!Defines.IgnoreNonDangerousExceptions)
                 NLogger.Error("HALT! DEADLOCK ESCAPE! You tried to enter read lock inner write locked thread!");
-            
+
             return new DummyDisposable();
         }
 
         try
         {
-            // Возвращает AsyncReaderWriterLock.Releaser, который реализует IDisposable
             return await _lockObj.ReadLockAsync(cancellationToken);
         }
         catch (Exception e)
@@ -60,28 +55,20 @@ public class RWLockAsync : IDisposable
         }
     }
 
-    /// <summary>
-    /// Асинхронное получение блокировки на запись.
-    /// Использование: using (await rwlock.WriteLockAsync()) { ... }
-    /// </summary>
     public async ValueTask<IDisposable> WriteLockAsync(CancellationToken cancellationToken = default)
     {
         if (_isMockMode) return new DummyDisposable();
 
-        // AsyncReaderWriterLock КАТЕГОРИЧЕСКИ запрещает брать лок на запись, если у потока 
-        // уже есть лок на чтение (бросает InvalidOperationException).
-        // Исключение: если это специальный UpgradeableReadLock.
         if (_lockObj.IsReadLockHeld && !_lockObj.IsUpgradeableReadLockHeld)
         {
             if (!Defines.IgnoreNonDangerousExceptions)
                 NLogger.Error("HALT! DEADLOCK ESCAPE! You tried to enter write lock while read lock is held!");
-            
+
             return new DummyDisposable();
         }
 
         try
         {
-            // Возвращает AsyncReaderWriterLock.Releaser, который реализует IDisposable
             return await _lockObj.WriteLockAsync(cancellationToken);
         }
         catch (Exception e)
@@ -92,9 +79,39 @@ public class RWLockAsync : IDisposable
         }
     }
 
+    public void Dispose()
+    {
+        _lockObj?.Dispose();
+    }
+
+#else // !NET5_0_OR_GREATER — заглушка
+
     /// <summary>
-    /// Выполнение СИНХРОННОГО экшена под АСИНХРОННЫМ локом на чтение.
+    /// Мок-аналог Awaitable/Releaser: ничего не делает, но поддерживает using (await ...) паттерн.
     /// </summary>
+    public readonly struct LockReleaser : IDisposable
+    {
+        public void Dispose() { }
+    }
+
+    public RWLockAsync() { }
+
+    public ValueTask<IDisposable> ReadLockAsync(CancellationToken cancellationToken = default)
+    {
+        return new ValueTask<IDisposable>(new LockReleaser());
+    }
+
+    public ValueTask<IDisposable> WriteLockAsync(CancellationToken cancellationToken = default)
+    {
+        return new ValueTask<IDisposable>(new LockReleaser());
+    }
+
+    public void Dispose() { }
+
+#endif
+
+    // —— Общие хелперы (одинаковы для обеих веток) ——
+
     public async Task ExecuteReadLockedAsync(Action action, CancellationToken cancellationToken = default)
     {
         using (await ReadLockAsync(cancellationToken))
@@ -103,9 +120,6 @@ public class RWLockAsync : IDisposable
         }
     }
 
-    /// <summary>
-    /// Выполнение СИНХРОННОГО экшена под АСИНХРОННЫМ локом на запись.
-    /// </summary>
     public async Task ExecuteWriteLockedAsync(Action action, CancellationToken cancellationToken = default)
     {
         using (await WriteLockAsync(cancellationToken))
@@ -114,9 +128,6 @@ public class RWLockAsync : IDisposable
         }
     }
 
-    /// <summary>
-    /// Выполнение АСИНХРОННОГО экшена под локом на чтение.
-    /// </summary>
     public async Task ExecuteReadLockedAsync(Func<Task> asyncAction, CancellationToken cancellationToken = default)
     {
         using (await ReadLockAsync(cancellationToken))
@@ -125,19 +136,11 @@ public class RWLockAsync : IDisposable
         }
     }
 
-    /// <summary>
-    /// Выполнение АСИНХРОННОГО экшена под локом на запись.
-    /// </summary>
     public async Task ExecuteWriteLockedAsync(Func<Task> asyncAction, CancellationToken cancellationToken = default)
     {
         using (await WriteLockAsync(cancellationToken))
         {
             await asyncAction();
         }
-    }
-
-    public void Dispose()
-    {
-        _lockObj?.Dispose();
     }
 }

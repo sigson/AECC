@@ -43,7 +43,7 @@ namespace AECC.Network
         /// Populate this before calling Start().
         /// Use IsListener = true for server endpoints, false for client connections.
         /// </summary>
-        public List<NetworkDestination> EndpointConfigs = new();
+        public List<NetworkDestination> EndpointConfigs = new List<NetworkDestination>();
 
         /// <summary>
         /// True if this instance acts as a server for at least one endpoint.
@@ -55,28 +55,28 @@ namespace AECC.Network
         // =====================================================================
 
         /// <summary>Event manager for dispatching events.</summary>
-        public EventManager EventManager { get; } = new();
+        public EventManager EventManager { get; } = new EventManager();
 
         /// <summary>All active server listeners, keyed by (Protocol, Port).</summary>
-        public ConcurrentDictionary<(NetworkProtocol, int), IServerAdapter> Servers = new();
+        public ConcurrentDictionary<(NetworkProtocol, int), IServerAdapter> Servers = new ConcurrentDictionary<(NetworkProtocol, int), IServerAdapter>();
 
         /// <summary>All active client connections, keyed by (Protocol, Host, Port).</summary>
-        public ConcurrentDictionary<(NetworkProtocol, string, int), ISocketAdapter> ClientSockets = new();
+        public ConcurrentDictionary<(NetworkProtocol, string, int), ISocketAdapter> ClientSockets = new ConcurrentDictionary<(NetworkProtocol, string, int), ISocketAdapter>();
 
         /// <summary>All confirmed sockets by ID (server-side).</summary>
-        public ConcurrentDictionary<long, ISocketAdapter> SocketsById = new();
+        public ConcurrentDictionary<long, ISocketAdapter> SocketsById = new ConcurrentDictionary<long, ISocketAdapter>();
 
         /// <summary>Per-socket stream frame accumulators (for stream-based protocols).</summary>
-        private ConcurrentDictionary<ISocketAdapter, StreamFrameAccumulator> _accumulators = new();
+        private ConcurrentDictionary<ISocketAdapter, StreamFrameAccumulator> _accumulators = new ConcurrentDictionary<ISocketAdapter, StreamFrameAccumulator>();
 
         /// <summary>Per-socket RPC bridges.</summary>
-        private ConcurrentDictionary<ISocketAdapter, RpcBridge> _rpcBridges = new();
+        private ConcurrentDictionary<ISocketAdapter, RpcBridge> _rpcBridges = new ConcurrentDictionary<ISocketAdapter, RpcBridge>();
 
         /// <summary>Identity manager for connection-oriented protocols.</summary>
         private SocketIdentityManager _identityManager;
 
         /// <summary>Reconnection timers for client sockets (TimerCompat-based).</summary>
-        private ConcurrentDictionary<(NetworkProtocol, string, int), TimerCompat> _reconnectTimers = new();
+        private ConcurrentDictionary<(NetworkProtocol, string, int), TimerCompat> _reconnectTimers = new ConcurrentDictionary<(NetworkProtocol, string, int), TimerCompat>();
 
         /// <summary>
         /// Outbound buffer hub. Buffers events while connections are being established
@@ -87,7 +87,7 @@ namespace AECC.Network
         /// <summary>
         /// Tracks which destinations have had connections auto-created.
         /// </summary>
-        private ConcurrentDictionary<(NetworkProtocol, string, int), NetworkDestination> _autoCreatedConfigs = new();
+        private ConcurrentDictionary<(NetworkProtocol, string, int), NetworkDestination> _autoCreatedConfigs = new ConcurrentDictionary<(NetworkProtocol, string, int), NetworkDestination>();
 
         /// <summary>
         /// Ping service — periodic latency measurement for all confirmed sockets.

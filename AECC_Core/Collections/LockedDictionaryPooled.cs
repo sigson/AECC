@@ -1,3 +1,4 @@
+#if NET5_0_OR_GREATER
 using AECC.Core.Logging;
 using AECC.Extensions.ThreadingSync;
 using Microsoft.Extensions.ObjectPool;
@@ -587,6 +588,8 @@ namespace AECC.Collections
 
         public bool IsReadOnly => false;
 
+        public bool IsLockdown => throw new NotImplementedException();
+
         public TValue this[TKey key]
         {
             get
@@ -640,6 +643,17 @@ namespace AECC.Collections
             return this.GetEnumerator();
         }
 
+        public void EnterLockdown()
+        {
+            throw new NotImplementedException();
+        }
+
+        public void ExitLockdown()
+        {
+            throw new NotImplementedException();
+        }
+
         #endregion
     }
 }
+#endif

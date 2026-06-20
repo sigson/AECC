@@ -240,6 +240,7 @@ namespace AECC.Core
                     catch (Exception ex)
                     {
                         NLogger.Log($"Error in component lifecycle execution: {ex.Message}\nType: {this.GetTypeFast()}");
+                        NLogger.LogError(ex);
                     }
                 }
             });

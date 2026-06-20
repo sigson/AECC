@@ -5,6 +5,7 @@ using AECC.Extensions;
 using System.Threading;
 using System.Text;
 using System;
+using System.Runtime.Serialization;
 
 namespace AECC.Extensions
 {
@@ -179,7 +180,7 @@ namespace AECC.Extensions
                 {
                     try
                     {
-                        if(Property.GetCustomAttributes(false).OfType<NonSerializedAttribute>().Count() != 0)
+                        if(Property.GetCustomAttributes(false).OfType<NonSerializedAttribute>().Count() != 0 && Property.GetCustomAttributes(false).OfType<IgnoreDataMemberAttribute>().Count() != 0)
                             SetProperty(Property, Object, ClassInstance);
                     }
                     catch { }
@@ -189,7 +190,7 @@ namespace AECC.Extensions
                 {
                     try
                     {
-                        if (Field.GetCustomAttributes(false).OfType<NonSerializedAttribute>().Count() != 0)
+                        if (Field.GetCustomAttributes(false).OfType<NonSerializedAttribute>().Count() != 0 && Field.GetCustomAttributes(false).OfType<IgnoreDataMemberAttribute>().Count() != 0)
                             SetField(Field, Object, ClassInstance);
                     }
                     catch { }

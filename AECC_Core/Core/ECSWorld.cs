@@ -5,11 +5,7 @@ using AECC.Extensions;
 
 namespace AECC.Core
 {
-    public
-#if GODOT4_0_OR_GREATER
-    partial
-#endif
-    class ECSWorld
+    public partial class ECSWorld
     {
         private static ECSWorld SingletonFallback = null;
         public static Func<ECSWorld> GetSingletonFallback = () =>

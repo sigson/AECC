@@ -15,6 +15,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Timers;
 
+public static class SuperExtensions
+{
+    public static T CastAs<T>(this object obj) where T : class
+    {
+        return obj as T;
+    }
+}
+
 namespace AECC.Extensions
 {
     public static class ClassEx

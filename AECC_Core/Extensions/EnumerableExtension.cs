@@ -177,6 +177,19 @@ public static class EnumerableExtension
         return string.Join(delimiter, source.Select(x => toStringFunc(x) ?? "null"));
     }
 
+    public static IEnumerable<TSource> ReplaceElement<TSource>(
+    this IEnumerable<TSource> source, 
+    TSource elementToReplace, 
+    TSource replaceTo)
+    {
+        if (source == null) throw new ArgumentNullException(nameof(source));
+
+        return source.Select(item => 
+            EqualityComparer<TSource>.Default.Equals(item, elementToReplace) 
+            ? replaceTo 
+            : item);
+    }
+
     private static readonly Random rand1 = new Random();
     public static IEnumerable<T> TakeRandom<T>(this IEnumerable<T> source, int count = -1)
     {
