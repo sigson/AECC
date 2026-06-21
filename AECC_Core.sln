@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AECC_TestClient", "AECC_Tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AECC_TestServer", "AECC_TestServer\AECC_TestServer.csproj", "{6F6D2385-0923-46A3-84F6-006BD38AAD67}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AECC.Locking", "AECC_Locking\AECC.Locking.csproj", "{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -111,6 +113,18 @@ Global
 		{6F6D2385-0923-46A3-84F6-006BD38AAD67}.Release|x64.Build.0 = Release|Any CPU
 		{6F6D2385-0923-46A3-84F6-006BD38AAD67}.Release|x86.ActiveCfg = Release|Any CPU
 		{6F6D2385-0923-46A3-84F6-006BD38AAD67}.Release|x86.Build.0 = Release|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Debug|x64.Build.0 = Debug|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Debug|x86.Build.0 = Debug|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Release|x64.ActiveCfg = Release|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Release|x64.Build.0 = Release|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Release|x86.ActiveCfg = Release|Any CPU
+		{EFE30CEE-C072-4A6E-B12D-6220DC0147C5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
