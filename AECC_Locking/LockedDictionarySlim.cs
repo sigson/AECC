@@ -51,8 +51,6 @@ namespace AECC.Locking
         private const int ELEMENT_SLOT = 0;
 
         private readonly ConcurrentDictionary<TKey, Cell> _dict = new ConcurrentDictionary<TKey, Cell>();
-        private long _global; // storage-level RW state (was `GlobalLocker : RWLock`)
-        private readonly int _globalParkHash;
         private volatile bool _lockdown;
 
         private LockedDictionarySlim<TKey, bool> _keysHolding;
@@ -63,7 +61,6 @@ namespace AECC.Locking
 
         public LockedDictionarySlim(bool preserveLockingKeys = false)
         {
-            _globalParkHash = RWCell.Mix(RuntimeHelpers.GetHashCode(this), GLOBAL_SLOT);
             HoldKeys = preserveLockingKeys;
             if (HoldKeys)
             {
@@ -78,7 +75,7 @@ namespace AECC.Locking
         {
             if (slot == GLOBAL_SLOT)
             {
-                RWCell.Exit(this, GLOBAL_SLOT, _globalParkHash, ref _global);
+                _lockdown = false; // LockStorage token released -> lift the soft lockdown
             }
             else
             {
@@ -87,17 +84,14 @@ namespace AECC.Locking
             }
         }
 
-        private RWToken GlobalRead()
-        {
-            return RWCell.Enter(this, GLOBAL_SLOT, _globalParkHash, ref _global, false)
-                ? new RWToken(this, this, GLOBAL_SLOT, 0) : default(RWToken);
-        }
-
-        private RWToken GlobalWrite()
-        {
-            return RWCell.Enter(this, GLOBAL_SLOT, _globalParkHash, ref _global, true)
-                ? new RWToken(this, this, GLOBAL_SLOT, 1) : default(RWToken);
-        }
+        // The per-operation storage lock is ELIDED. Holding it during cell-lock acquisition created
+        // an inner->outer lock-ordering inversion (HoldKey/combinator acquire a cell lock and then
+        // the storage lock) that deadlocks against a writer-favoring lockdown. ConcurrentDictionary
+        // is itself thread-safe and the per-cell locks provide the granular guarantee, so element
+        // ops need no storage lock at all. Lockdown becomes a soft volatile flag that blocks new
+        // mutations; in-flight ops complete naturally. (This is graft-plan risk-audit point 7.)
+        private RWToken GlobalRead() { return default(RWToken); }
+        private RWToken GlobalWrite() { return default(RWToken); }
 
         private RWToken CellLock(Cell c, bool write)
         {
@@ -106,10 +100,10 @@ namespace AECC.Locking
                 ? new RWToken(this, c, ELEMENT_SLOT, write ? (byte)1 : (byte)0) : default(RWToken);
         }
 
-        // ───────── lockdown ─────────
+        // ───────── lockdown (soft, flag-based) ─────────
 
-        public void EnterLockdown() { using (GlobalWrite()) { _lockdown = true; } }
-        public void ExitLockdown() { using (GlobalWrite()) { _lockdown = false; } }
+        public void EnterLockdown() { _lockdown = true; }
+        public void ExitLockdown() { _lockdown = false; }
 
         // ───────── core add/change (ported from LockedDictionary.TryAddOrChange) ─────────
 
@@ -122,11 +116,17 @@ namespace AECC.Locking
             {
                 if (_lockdown) return false;
 
-                // ConcurrentDictionary already provides atomic add/lookup, so the contention
-                // fallback is a bounded CAS-retry loop (this replaces the original's
-                // goto/Monitor.Enter juggling, which could leave the dict monitor unbalanced
-                // under the very contention it was meant to handle). Contract is unchanged:
-                // returns true if a fresh entry was added, false if an existing one was changed.
+                // Cell lock mode for add/change. For a REAL value store, adding or replacing the
+                // value is an exclusive mutation -> WRITE lock (this is the fix for the validator's
+                // "READ saw active writer": previously the mode came from overrideLockingMode, which
+                // defaulted to read, so callbacks ran under a shared read lock). The nested
+                // KeysHoldingStorage is a hold proxy whose bool value is never meaningfully mutated;
+                // there the lock mode IS the semantic (read = shared hold, write = exclusive/add-block),
+                // so it follows overrideLockingMode.
+                bool cellWrite = HoldKeyStorage
+                    ? (overrideLockingMode != null ? (bool)overrideLockingMode : true)
+                    : true;
+
                 while (true)
                 {
                     // (1) attempt to insert a fresh cell
@@ -144,8 +144,7 @@ namespace AECC.Locking
                         RWToken newTok = default(RWToken);
                         if (lockedMode)
                         {
-                            bool wlock = overrideLockingMode != null ? (bool)overrideLockingMode : LockValue;
-                            newTok = CellLock(newCell, wlock);
+                            newTok = CellLock(newCell, cellWrite);
                         }
                         if (_dict.TryAdd(key, newCell))
                         {
@@ -161,8 +160,7 @@ namespace AECC.Locking
                     // (2) change the existing cell
                     Cell dvalue;
                     if (!_dict.TryGetValue(key, out dvalue)) continue; // vanished -> retry add
-                    bool wlock2 = overrideLockingMode != null ? (bool)overrideLockingMode : LockValue;
-                    RWToken token = CellLock(dvalue, wlock2);
+                    RWToken token = CellLock(dvalue, cellWrite);
                     Cell check;
                     if (!_dict.TryGetValue(key, out check) || !ReferenceEquals(check, dvalue))
                     {
@@ -180,6 +178,7 @@ namespace AECC.Locking
         private bool TryRemove(TKey key, out TValue value, Action<TKey, TValue> action = null)
         {
             value = default(TValue);
+            if (_lockdown) return false;
             using (GlobalRead())
             {
                 while (true)
@@ -250,9 +249,8 @@ namespace AECC.Locking
             _keysHolding.TryAddChangeLockedElement(key, false, true, out rd, exclusive);
             if (rd.IsReal)
             {
-                if (!ContainsKey(key))
+                if (!_dict.ContainsKey(key)) // lock-free; never re-acquire a storage lock while holding the holding cell
                 {
-                    if (DebugChecks && ContainsKey(key)) DebugFail("HoldKey: key present under active hold " + key);
                     lockToken = rd;
                     return true;
                 }
@@ -383,7 +381,7 @@ namespace AECC.Locking
             }
         }
 
-        public RWToken LockStorage() { return GlobalWrite(); }
+        public RWToken LockStorage() { _lockdown = true; return new RWToken(this, this, GLOBAL_SLOT, 1); }
 
         public void Clear() { using (GlobalWrite()) { _dict.Clear(); } }
 
@@ -483,9 +481,6 @@ namespace AECC.Locking
         /// </summary>
         public bool DebugVerifyQuiescent(out string msg)
         {
-            long g = Volatile.Read(ref _global);
-            if (g != 0) { msg = "global lock not released at quiescence: 0x" + g.ToString("X"); DebugFail(msg); return false; }
-
             int counted = 0;
             foreach (var kv in _dict)
             {

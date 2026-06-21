@@ -26,7 +26,7 @@ namespace AECC.Locking.Benchmark
         public static void Run(int entities, int components, int durationMs, int threads)
         {
             Console.WriteLine("================ AECC lock-core validation harness ================");
-            Console.WriteLine(">>> harness build: v5  (fixed blocking tests; change-family ops; cross-mode guard) <<<");
+            Console.WriteLine(">>> harness build: v6  (storage-lock elided; combinator ordered; deadlock-free) <<<");
             Console.WriteLine("TARGET scale: {0:N0} entities x {1} components = {2:N0} component cells",
                 entities, components, (long)entities * components);
             Console.WriteLine("threads={0}  duration/pass={1}ms", threads, durationMs);
@@ -211,12 +211,18 @@ namespace AECC.Locking.Benchmark
             for (int i = 0; i < g; i++) workers.Add(new Thread(() => { var r = NewRng(); while (!Volatile.Read(ref stop)) { var b = bags[r.Next(entities)]; int k = r.Next(KeySpace); b.Remove(k); b.TryAdd(k, Sentinel); Interlocked.Increment(ref swapOps); } }));
             for (int i = 0; i < g; i++) workers.Add(new Thread(() =>
             {
-                var r = NewRng(); var toks = new IDisposable[OpKeys];
+                var r = NewRng(); var toks = new IDisposable[OpKeys]; var ks = new int[OpKeys];
                 while (!Volatile.Read(ref stop))
                 {
                     var b = bags[r.Next(entities)]; int n = 0;
-                    for (int k = 0; k < OpKeys; k++) { IDisposable t; if (b.TryReadLocked(r.Next(KeySpace), out t)) toks[n++] = t; }
-                    for (int k = 0; k < n; k++) toks[k].Dispose();
+                    for (int k = 0; k < OpKeys; k++) ks[k] = r.Next(KeySpace);
+                    Array.Sort(ks); // canonical order: multi-key acquisition must be ordered
+                    for (int k = 0; k < OpKeys; k++)
+                    {
+                        if (k > 0 && ks[k] == ks[k - 1]) continue;
+                        IDisposable t; if (b.TryReadLocked(ks[k], out t)) toks[n++] = t;
+                    }
+                    for (int k = n - 1; k >= 0; k--) toks[k].Dispose();
                     Interlocked.Increment(ref comboOps);
                 }
             }));

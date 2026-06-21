@@ -65,7 +65,7 @@ namespace AECC.Locking.Benchmark
         public static void Run(int dicts, int keys, int threads, int durationMs)
         {
             Console.WriteLine("================ AECC dictionary consistency stress ================");
-            Console.WriteLine(">>> dictstress build: v1 <<<");
+            Console.WriteLine(">>> dictstress build: v3  (add/change WRITE-locked; exclusion fix) <<<");
             Console.WriteLine("dicts={0}  keys={1}  threads={2}  duration={3}ms", dicts, keys, threads, durationMs);
             Console.WriteLine("(small dicts + small key space + many threads = maximum collision rate)");
             Console.WriteLine();

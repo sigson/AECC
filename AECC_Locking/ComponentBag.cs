@@ -48,13 +48,10 @@ namespace AECC.Locking
         private Cell[] _slots = new Cell[8];
         private int _count;                              // high-water of allocated slots
         private readonly object _struct = new object();  // serializes slot alloc/reclaim/publish only
-        private long _global;
-        private readonly int _globalParkHash;
         private volatile bool _lockdown;
 
         public ComponentBag()
         {
-            _globalParkHash = RWCell.Mix(RuntimeHelpers.GetHashCode(this), GLOBAL_SLOT);
         }
 
         public bool IsLockdown { get { return _lockdown; } }
@@ -65,24 +62,18 @@ namespace AECC.Locking
         {
             if (slot == GLOBAL_SLOT)
             {
-                RWCell.Exit(this, GLOBAL_SLOT, _globalParkHash, ref _global);
+                _lockdown = false; // LockStorage token released
                 return;
             }
             Cell c = (Cell)container;
             RWCell.Exit(c, ELEMENT_SLOT, RuntimeHelpers.GetHashCode(c), ref c.Lock);
         }
 
-        private RWToken GlobalRead()
-        {
-            return RWCell.Enter(this, GLOBAL_SLOT, _globalParkHash, ref _global, false)
-                ? new RWToken(this, this, GLOBAL_SLOT, 0) : default(RWToken);
-        }
-
-        private RWToken GlobalWrite()
-        {
-            return RWCell.Enter(this, GLOBAL_SLOT, _globalParkHash, ref _global, true)
-                ? new RWToken(this, this, GLOBAL_SLOT, 1) : default(RWToken);
-        }
+        // Storage lock ELIDED (see LockedDictionarySlim for the rationale): holding it across cell
+        // acquisition inverts the lock hierarchy and deadlocks the multi-cell combinator against
+        // lockdown. Element ops rely on the per-cell locks + the brief structural monitor only.
+        private RWToken GlobalRead() { return default(RWToken); }
+        private RWToken GlobalWrite() { return default(RWToken); }
 
         private RWToken CellLock(Cell c, bool write)
         {
@@ -393,6 +384,7 @@ namespace AECC.Locking
         public bool ExecuteOnRemoveLocked(int key, out TValue value, Action<int, TValue> action)
         {
             value = default(TValue);
+            if (_lockdown) return false;
             using (GlobalRead())
             {
                 while (true)
@@ -466,8 +458,8 @@ namespace AECC.Locking
             return list;
         }
 
-        public void EnterLockdown() { using (GlobalWrite()) { _lockdown = true; } }
-        public void ExitLockdown() { using (GlobalWrite()) { _lockdown = false; } }
-        public RWToken LockStorage() { return GlobalWrite(); }
+        public void EnterLockdown() { _lockdown = true; }
+        public void ExitLockdown() { _lockdown = false; }
+        public RWToken LockStorage() { _lockdown = true; return new RWToken(this, this, GLOBAL_SLOT, 1); }
     }
 }

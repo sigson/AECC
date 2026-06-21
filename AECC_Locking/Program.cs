@@ -18,7 +18,7 @@ namespace AECC.Locking
                 int dicts = Arg(args, 1, 2);
                 int keys = Arg(args, 2, 24);
                 int threads = Arg(args, 3, Math.Max(8, Environment.ProcessorCount * 2));
-                int durMs = Arg(args, 4, 5000);
+                int durMs = Arg(args, 4, 50000);
                 try { Benchmark.DictStress.Run(dicts, keys, threads, durMs); }
                 catch (Exception ex) { Console.WriteLine("FATAL: " + ex); Environment.ExitCode = 1; }
                 return;
