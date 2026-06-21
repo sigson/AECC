@@ -24,8 +24,14 @@
 ```bash
 cd AECC.Locking
 dotnet build -c Release
-# entities components durationMs threads
+# основной харнесс ComponentBag: entities components durationMs threads
 dotnet run -c Release -- 100000 12 5000 16
+
+# консистентность словаря под макс-контеншеном: dicts keys threads durationMs
+dotnet run -c Release -- dictstress 2 24 32 5000
+
+# сравнение производительности словарей (оригинальный дизайн vs новый): dicts keys threads durationMs
+dotnet run -c Release -- dictbench 2 2000 32 5000
 ```
 
 Аргументы по умолчанию: `100000 12 5000 16`. Чтобы приблизиться к целевой нагрузке — поднимайте
