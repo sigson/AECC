@@ -17,6 +17,7 @@ using System.Diagnostics.Contracts;
 using System.Diagnostics;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
+using AECC.Locking;
 
 namespace AECC.Core
 {
@@ -481,7 +482,7 @@ namespace AECC.Core
                         allentities.AddRange(this.EntityComponentPresenceSign.Keys);
 
                         bool contractResult = false;
-                        List<RWLock.LockToken> lockers = null;
+                        List<IDisposable> lockers = null;
                         List<ECSEntity> executionEntities = null;
                         if (Defines.OneThreadMode)
                         {
@@ -553,7 +554,7 @@ namespace AECC.Core
                         }
                         
                         bool contractResult = false;
-                        List<RWLock.LockToken> lockers = null;
+                        List<IDisposable> lockers = null;
                         List<ECSEntity> executionEntities = null;
                         if (Defines.OneThreadMode)
                         {
@@ -617,10 +618,10 @@ namespace AECC.Core
     IDictionary<long, List<Func<ECSEntity, bool>>> localContractConditions,
     IDictionary<long, Dictionary<long, bool>> localEntityComponentPresenceSign,
     bool partialEntityTargetListLockingAllowed,
-    out List<RWLock.LockToken> lockTokens,
+    out List<IDisposable> lockTokens,
     out List<ECSEntity> executionEntities)
         {
-            lockTokens = new List<RWLock.LockToken>();
+            lockTokens = new List<IDisposable>();
             executionEntities = new List<ECSEntity>();
             bool globalViolationSeizure = false;
 
@@ -646,7 +647,7 @@ namespace AECC.Core
                 }
 
                 bool violationSeizure = false;
-                var entityTokens = new List<RWLock.LockToken>();
+                var entityTokens = new List<IDisposable>();
                 bool yescomponent = false;
                 
                 // Check component requirements
@@ -793,9 +794,9 @@ namespace AECC.Core
             return executionEntities.Count > 0;
         }
 
-        private bool GetContractLockers(List<long> contractEntities, IDictionary<long, List<Func<ECSEntity, bool>>> LocalContractConditions, IDictionary<long, Dictionary<long, bool>> LocalEntityComponentPresenceSign, bool partialEntityTargetListLockingAllowed, out List<RWLock.LockToken> lockTokens, out List<ECSEntity> executionEntities)
+        private bool GetContractLockers(List<long> contractEntities, IDictionary<long, List<Func<ECSEntity, bool>>> LocalContractConditions, IDictionary<long, Dictionary<long, bool>> LocalEntityComponentPresenceSign, bool partialEntityTargetListLockingAllowed, out List<IDisposable> lockTokens, out List<ECSEntity> executionEntities)
         {
-            Dictionary<long, List<RWLock.LockToken>> Lockers = new Dictionary<long, List<RWLock.LockToken>>();
+            Dictionary<long, List<IDisposable>> Lockers = new Dictionary<long, List<IDisposable>>();
             lockTokens = null;
             executionEntities = null;
             var localExecutionEntities = new List<ECSEntity>();
@@ -816,7 +817,7 @@ namespace AECC.Core
                 entityWorld.entityManager.EntityStorage.ExecuteReadLockedContinuously(entityid, (entid, contentity) =>
                 {
                     bool violationSeizure = false;
-                    Lockers.Add(entid, new List<RWLock.LockToken>());
+                    Lockers.Add(entid, new List<IDisposable>());
                     
                     if (LocalEntityComponentPresenceSign.TryGetValue(entid, out var neededComponents))
                     {
@@ -956,9 +957,9 @@ namespace AECC.Core
                         localExecutionEntities.Add(contentity);
                     }
                 }, out var entitytoken);
-                if (entitytoken != null && Lockers.ContainsKey(entityid))
+                if (entitytoken.IsReal && Lockers.ContainsKey(entityid))
                     Lockers[entityid].Add(entitytoken);
-                else if (entitytoken != null)
+                else if (entitytoken.IsReal)
                 {
                     entitytoken.Dispose();
                 }

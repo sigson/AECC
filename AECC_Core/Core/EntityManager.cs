@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
+using AECC.Locking;
 using AECC.Core.Serialization; // Требуется для EntitySerializator
 
 namespace AECC.Core
@@ -15,9 +16,14 @@ namespace AECC.Core
     public class ECSEntityManager
     {
         private ECSWorld world;
-        public ILockedDictionary<long, ECSEntity> EntityStorage = new LockedDictionary<long, ECSEntity>();
+        // PHASE 1: world-level sync dictionaries moved to LockedDictionarySlim — the per-cell
+        // ReaderWriterLockSlim is gone, the cell is a ~32 B node with an inline `long` lock.
+        // HoldKeys is OFF here (entity storage never holds keys by absence). Returns RWToken now.
+        public LockedDictionarySlim<long, ECSEntity> EntityStorage = new LockedDictionarySlim<long, ECSEntity>();
+        // PHASE 1: async mirror is no longer the recommended path (removed entirely in Phase 3).
+        // It is kept compiling here but is NOT populated by the default (sync) AddNewEntity path.
         public LockedDictionaryAsync<long, ECSEntity> EntityStorageAsync = new LockedDictionaryAsync<long, ECSEntity>();
-        public ILockedDictionary<string, ECSEntity> PreinitializedEntities = new LockedDictionary<string, ECSEntity>();
+        public LockedDictionarySlim<string, ECSEntity> PreinitializedEntities = new LockedDictionarySlim<string, ECSEntity>();
 
         public bool isAsync => EntityStorageAsync.GetCountAsync().Result > 0;
 

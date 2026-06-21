@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using AECC.Extensions.ThreadingSync;
 using System.Runtime.Serialization;
 using AECC.Collections;
+using AECC.Locking;
 using AECC.Core.Serialization;
 using AECC.Core.BuiltInTypes.Types.AtomicType;
 
@@ -90,14 +91,16 @@ namespace AECC.Core
         /// </summary>
         public Dictionary<long, IECSObjectPathContainer> childECSObjectsId = new Dictionary<long, IECSObjectPathContainer>();
         [System.NonSerialized]
-        private ILockedDictionary<long, IECSObject> storagechildECSObjects;
-        private ILockedDictionary<long, IECSObject> childECSObjects
+        private LockedDictionarySlim<long, IECSObject> storagechildECSObjects;
+        private LockedDictionarySlim<long, IECSObject> childECSObjects
         {
             get
             {
                 if (storagechildECSObjects == null)
                 {
-                    storagechildECSObjects = new LockedDictionary<long, IECSObject>();
+                    // PHASE 1: world-level child tree on LockedDictionarySlim, HoldKeys OFF
+                    // (children are never reserved by absence). Per-cell RWLock eliminated.
+                    storagechildECSObjects = new LockedDictionarySlim<long, IECSObject>();
                 }
                 return storagechildECSObjects;
             }
@@ -203,17 +206,17 @@ namespace AECC.Core
             return childECSObjects.TryGetValue(key, out value);
         }
 
-        public bool TryGetChildObjectReadLocked(long key, out IECSObject value, out RWLock.LockToken lockToken)
+        public bool TryGetChildObjectReadLocked(long key, out IECSObject value, out RWToken lockToken)
         {
             return childECSObjects.TryGetLockedElement(key, out value, out lockToken);
         }
 
-        public bool TryGetChildObjectWriteLocked(long key, out IECSObject value, out RWLock.LockToken lockToken)
+        public bool TryGetChildObjectWriteLocked(long key, out IECSObject value, out RWToken lockToken)
         {
             return childECSObjects.TryGetLockedElement(key, out value, out lockToken, true);
         }
 
-        public RWLock.LockToken GetLockedStorage()
+        public RWToken GetLockedStorage()
         {
             return childECSObjects.LockStorage();
         }
