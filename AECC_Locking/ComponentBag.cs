@@ -48,7 +48,16 @@ namespace AECC.Locking
         private Cell[] _slots = new Cell[8];
         private int _count;                              // high-water of allocated slots
         private readonly object _struct = new object();  // serializes slot alloc/reclaim/publish only
-        private volatile bool _lockdown;
+        private volatile bool _lockdown;                 // SOFT lockdown: blocks add/change/hold; get/remove still work.
+
+        // HARD freeze (LockStorage): true stop-the-world via an entry barrier (see LockedDictionarySlim
+        // for the full rationale). Mutating ops count themselves in _inflight; the freezer raises _frozen
+        // and drains. The freezing thread bypasses its own barrier. Reads are not gated.
+        private volatile bool _frozen;
+        private int _freezeOwner = -1;
+        private int _freezeDepth;
+        private int _inflight;
+        private readonly object _freezeGate = new object();
 
         public ComponentBag()
         {
@@ -62,18 +71,88 @@ namespace AECC.Locking
         {
             if (slot == GLOBAL_SLOT)
             {
-                _lockdown = false; // LockStorage token released
+                ReleaseFreeze(); // LockStorage token released -> lift the hard freeze
                 return;
             }
             Cell c = (Cell)container;
             RWCell.Exit(c, ELEMENT_SLOT, RuntimeHelpers.GetHashCode(c), ref c.Lock);
         }
 
-        // Storage lock ELIDED (see LockedDictionarySlim for the rationale): holding it across cell
-        // acquisition inverts the lock hierarchy and deadlocks the multi-cell combinator against
-        // lockdown. Element ops rely on the per-cell locks + the brief structural monitor only.
+        // Storage READ lock ELIDED (see LockedDictionarySlim for the rationale): holding it across cell
+        // acquisition inverts the lock hierarchy and deadlocks the multi-cell combinator against a
+        // writer-favoring lockdown. Element ops rely on the per-cell locks + the brief structural monitor.
         private RWToken GlobalRead() { return default(RWToken); }
         private RWToken GlobalWrite() { return default(RWToken); }
+
+        // ───────── hard-freeze barrier ─────────
+
+        private bool EnterFreeze()
+        {
+            if (Defines.OneThreadMode) return false;
+            if (!Volatile.Read(ref _frozen))
+            {
+                Interlocked.Increment(ref _inflight);
+                if (!Volatile.Read(ref _frozen)) return true;
+                Interlocked.Decrement(ref _inflight);
+            }
+            return EnterFreezeSlow();
+        }
+
+        private bool EnterFreezeSlow()
+        {
+            int me = Thread.CurrentThread.ManagedThreadId;
+            while (true)
+            {
+                if (Volatile.Read(ref _freezeOwner) == me) return false; // owner bypass (uncounted)
+                lock (_freezeGate)
+                {
+                    while (Volatile.Read(ref _frozen) && Volatile.Read(ref _freezeOwner) != me)
+                        Monitor.Wait(_freezeGate);
+                }
+                if (!Volatile.Read(ref _frozen))
+                {
+                    Interlocked.Increment(ref _inflight);
+                    if (!Volatile.Read(ref _frozen)) return true;
+                    Interlocked.Decrement(ref _inflight);
+                }
+            }
+        }
+
+        private void LeaveFreeze(bool counted) { if (counted) Interlocked.Decrement(ref _inflight); }
+
+        private RWToken AcquireFreeze()
+        {
+            if (Defines.OneThreadMode) return new RWToken(this, this, GLOBAL_SLOT, 1);
+            int me = Thread.CurrentThread.ManagedThreadId;
+            bool first;
+            lock (_freezeGate)
+            {
+                while (_frozen && _freezeOwner != me) Monitor.Wait(_freezeGate);
+                _frozen = true;
+                _freezeOwner = me;
+                first = (++_freezeDepth == 1);
+            }
+            if (first)
+            {
+                var sw = new SpinWait();
+                while (Volatile.Read(ref _inflight) > 0) sw.SpinOnce();
+            }
+            return new RWToken(this, this, GLOBAL_SLOT, 1);
+        }
+
+        private void ReleaseFreeze()
+        {
+            if (Defines.OneThreadMode) return;
+            lock (_freezeGate)
+            {
+                if (--_freezeDepth == 0)
+                {
+                    _frozen = false;
+                    _freezeOwner = -1;
+                    Monitor.PulseAll(_freezeGate);
+                }
+            }
+        }
 
         private RWToken CellLock(Cell c, bool write)
         {
@@ -81,6 +160,19 @@ namespace AECC.Locking
             return RWCell.Enter(c, ELEMENT_SLOT, ph, ref c.Lock, write)
                 ? new RWToken(this, c, ELEMENT_SLOT, write ? (byte)1 : (byte)0) : default(RWToken);
         }
+
+        // Disposable scope that gates a mutating op against a hard freeze. EnterFreeze on entry,
+        // LeaveFreeze on dispose. Replaces the (now no-op) GlobalRead() scope in mutating methods so
+        // a single 'using' both keeps the original structure and joins the freeze barrier.
+        private struct MutScope : IDisposable
+        {
+            private readonly ComponentBag<TValue> _o;
+            private readonly bool _counted;
+            internal MutScope(ComponentBag<TValue> o, bool gate) { _o = o; _counted = gate && o.EnterFreeze(); }
+            public void Dispose() { if (_counted) Interlocked.Decrement(ref _o._inflight); }
+        }
+        private MutScope Mutation() { return new MutScope(this, true); }
+        private MutScope Mutation(bool gate) { return new MutScope(this, gate); }
 
         // A write lock for a structural mutation is usable iff it is real, or we are single-thread.
         // A non-real token in multi-thread mode means a cross-mode same-thread conflict -> refuse.
@@ -133,7 +225,7 @@ namespace AECC.Locking
         {
             token = default(RWToken);
             value = default(TValue);
-            using (GlobalRead())
+            using (Mutation(write))
             {
                 while (true)
                 {
@@ -172,7 +264,7 @@ namespace AECC.Locking
         {
             token = default(RWToken);
             if (Defines.OneThreadMode) return true;
-            using (GlobalRead())
+            using (Mutation())
             {
                 if (_lockdown) return false;
                 while (true)
@@ -228,7 +320,7 @@ namespace AECC.Locking
 
         public bool TryAdd(int key, TValue value)
         {
-            using (GlobalRead())
+            using (Mutation())
             {
                 if (_lockdown) return false;
                 while (true)
@@ -263,7 +355,7 @@ namespace AECC.Locking
         public bool AddOrChange(int key, TValue value, out TValue oldValue)
         {
             oldValue = default(TValue);
-            using (GlobalRead())
+            using (Mutation())
             {
                 if (_lockdown) return false;
                 while (true)
@@ -296,7 +388,7 @@ namespace AECC.Locking
         /// <summary>Add and run <paramref name="action"/> while holding the new component's write lock.</summary>
         public bool ExecuteOnAddLocked(int key, TValue value, Action<int, TValue> action)
         {
-            using (GlobalRead())
+            using (Mutation())
             {
                 if (_lockdown) return false;
                 while (true)
@@ -343,7 +435,7 @@ namespace AECC.Locking
         /// <summary>If present, replace the value under the write lock and run onChange(key,new,old).</summary>
         public bool ExecuteOnChangeLocked(int key, TValue value, Action<int, TValue, TValue> onChange)
         {
-            using (GlobalRead())
+            using (Mutation())
             {
                 while (true)
                 {
@@ -384,8 +476,9 @@ namespace AECC.Locking
         public bool ExecuteOnRemoveLocked(int key, out TValue value, Action<int, TValue> action)
         {
             value = default(TValue);
-            if (_lockdown) return false;
-            using (GlobalRead())
+            // Regular remove deliberately works during soft lockdown (EntityComponentStorage.OnEntityDelete
+            // enters lockdown then drains components via remove). Only the HARD freeze gates it (below).
+            using (Mutation())
             {
                 while (true)
                 {
@@ -460,6 +553,6 @@ namespace AECC.Locking
 
         public void EnterLockdown() { _lockdown = true; }
         public void ExitLockdown() { _lockdown = false; }
-        public RWToken LockStorage() { _lockdown = true; return new RWToken(this, this, GLOBAL_SLOT, 1); }
+        public RWToken LockStorage() { return AcquireFreeze(); }
     }
 }

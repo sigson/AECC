@@ -65,7 +65,7 @@ namespace AECC.Locking.Benchmark
         public static void Run(int dicts, int keys, int threads, int durationMs)
         {
             Console.WriteLine("================ AECC dictionary consistency stress ================");
-            Console.WriteLine(">>> dictstress build: v3  (add/change WRITE-locked; exclusion fix) <<<");
+            Console.WriteLine(">>> dictstress build: v4  (LockStorage hard-freeze barrier validated) <<<");
             Console.WriteLine("dicts={0}  keys={1}  threads={2}  duration={3}ms", dicts, keys, threads, durationMs);
             Console.WriteLine("(small dicts + small key space + many threads = maximum collision rate)");
             Console.WriteLine();
@@ -212,6 +212,21 @@ namespace AECC.Locking.Benchmark
                                     {
                                         var snap = m.ClearSnapshot();
                                         GC.KeepAlive(snap);
+                                    }
+                                    else if (sub == 2)
+                                    {
+                                        // HARD freeze: acquire stop-the-world, verify no mutation slips
+                                        // through the barrier while it is held, then release. A deadlock
+                                        // here is caught by the watchdog; a count change means a mutator
+                                        // bypassed the freeze (barrier bug).
+                                        using (m.LockStorage())
+                                        {
+                                            long c1 = m.Count;
+                                            Thread.SpinWait(300);
+                                            long c2 = m.Count;
+                                            if (c1 != c2)
+                                                LockedDictionarySlim<int, Box>.DebugFail("Count changed under LockStorage freeze: " + c1 + " -> " + c2);
+                                        }
                                     }
                                     else
                                     {

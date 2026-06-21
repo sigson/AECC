@@ -51,7 +51,20 @@ namespace AECC.Locking
         private const int ELEMENT_SLOT = 0;
 
         private readonly ConcurrentDictionary<TKey, Cell> _dict = new ConcurrentDictionary<TKey, Cell>();
-        private volatile bool _lockdown;
+        private volatile bool _lockdown;        // SOFT lockdown (EnterLockdown): blocks add/change/hold/unsafe; get/remove still work.
+
+        // HARD freeze (LockStorage / Clear / ClearSnapshot): a true stop-the-world for this storage.
+        // Implemented as an entry barrier (NOT a lock held across cell acquisition), so it cannot
+        // re-create the inner->outer inversion that the elided per-op global read lock caused.
+        // Mutating ops increment _inflight at entry and decrement at exit; the freezer raises _frozen,
+        // then waits for _inflight to drain. The freezing thread bypasses its own barrier (so it can
+        // operate on the frozen storage, e.g. ECSWorldSquash reading/moving entries while it holds the
+        // freeze). Reads are intentionally NOT gated (they cannot corrupt a freezer that only reads/moves).
+        private volatile bool _frozen;
+        private int _freezeOwner = -1;          // ManagedThreadId of the freezer, -1 = none
+        private int _freezeDepth;               // guarded by _freezeGate (reentrant LockStorage by owner)
+        private int _inflight;                  // Interlocked count of in-flight mutating ops
+        private readonly object _freezeGate = new object();
 
         private LockedDictionarySlim<TKey, bool> _keysHolding;
         public bool HoldKeys { get; private set; }
@@ -75,7 +88,7 @@ namespace AECC.Locking
         {
             if (slot == GLOBAL_SLOT)
             {
-                _lockdown = false; // LockStorage token released -> lift the soft lockdown
+                ReleaseFreeze(); // LockStorage token released -> lift the hard freeze
             }
             else
             {
@@ -84,14 +97,86 @@ namespace AECC.Locking
             }
         }
 
-        // The per-operation storage lock is ELIDED. Holding it during cell-lock acquisition created
+        // The per-operation storage READ lock is ELIDED. Holding it during cell-lock acquisition created
         // an inner->outer lock-ordering inversion (HoldKey/combinator acquire a cell lock and then
         // the storage lock) that deadlocks against a writer-favoring lockdown. ConcurrentDictionary
-        // is itself thread-safe and the per-cell locks provide the granular guarantee, so element
-        // ops need no storage lock at all. Lockdown becomes a soft volatile flag that blocks new
-        // mutations; in-flight ops complete naturally. (This is graft-plan risk-audit point 7.)
+        // is itself thread-safe and the per-cell locks provide the granular guarantee. Stop-the-world
+        // (LockStorage) is provided by the entry barrier above instead. (Graft-plan risk-audit point 7.)
         private RWToken GlobalRead() { return default(RWToken); }
         private RWToken GlobalWrite() { return default(RWToken); }
+
+        // ───────── hard-freeze barrier ─────────
+
+        /// <summary>Mutating-op entry. Returns true if this call incremented the in-flight count and
+        /// the caller must pair it with <see cref="LeaveFreeze"/>; false means uncounted (single-thread
+        /// mode, or this thread owns the freeze and is bypassing it).</summary>
+        private bool EnterFreeze()
+        {
+            if (Defines.OneThreadMode) return false;
+            if (!Volatile.Read(ref _frozen))
+            {
+                Interlocked.Increment(ref _inflight);
+                if (!Volatile.Read(ref _frozen)) return true;   // confirmed open while counted
+                Interlocked.Decrement(ref _inflight);           // froze under us -> back off
+            }
+            return EnterFreezeSlow();
+        }
+
+        private bool EnterFreezeSlow()
+        {
+            int me = Thread.CurrentThread.ManagedThreadId;
+            while (true)
+            {
+                if (Volatile.Read(ref _freezeOwner) == me) return false; // owner bypass (uncounted)
+                lock (_freezeGate)
+                {
+                    while (Volatile.Read(ref _frozen) && Volatile.Read(ref _freezeOwner) != me)
+                        Monitor.Wait(_freezeGate);
+                }
+                if (!Volatile.Read(ref _frozen))
+                {
+                    Interlocked.Increment(ref _inflight);
+                    if (!Volatile.Read(ref _frozen)) return true;
+                    Interlocked.Decrement(ref _inflight);
+                }
+            }
+        }
+
+        private void LeaveFreeze(bool counted) { if (counted) Interlocked.Decrement(ref _inflight); }
+
+        private RWToken AcquireFreeze()
+        {
+            if (Defines.OneThreadMode) return new RWToken(this, this, GLOBAL_SLOT, 1);
+            int me = Thread.CurrentThread.ManagedThreadId;
+            bool first;
+            lock (_freezeGate)
+            {
+                while (_frozen && _freezeOwner != me) Monitor.Wait(_freezeGate);
+                _frozen = true;
+                _freezeOwner = me;
+                first = (++_freezeDepth == 1);
+            }
+            if (first)
+            {
+                var sw = new SpinWait();
+                while (Volatile.Read(ref _inflight) > 0) sw.SpinOnce(); // drain ops that entered before the freeze
+            }
+            return new RWToken(this, this, GLOBAL_SLOT, 1);
+        }
+
+        private void ReleaseFreeze()
+        {
+            if (Defines.OneThreadMode) return;
+            lock (_freezeGate)
+            {
+                if (--_freezeDepth == 0)
+                {
+                    _frozen = false;
+                    _freezeOwner = -1;
+                    Monitor.PulseAll(_freezeGate);
+                }
+            }
+        }
 
         private RWToken CellLock(Cell c, bool write)
         {
@@ -100,10 +185,11 @@ namespace AECC.Locking
                 ? new RWToken(this, c, ELEMENT_SLOT, write ? (byte)1 : (byte)0) : default(RWToken);
         }
 
-        // ───────── lockdown (soft, flag-based) ─────────
+        // ───────── lockdown (soft, flag-based) — distinct from the hard freeze above ─────────
 
         public void EnterLockdown() { _lockdown = true; }
         public void ExitLockdown() { _lockdown = false; }
+
 
         // ───────── core add/change (ported from LockedDictionary.TryAddOrChange) ─────────
 
@@ -112,8 +198,11 @@ namespace AECC.Locking
         {
             lockToken = default(RWToken);
             oldValue = default(TValue);
-            using (GlobalRead())
+            bool counted = EnterFreeze();
+            try
             {
+                using (GlobalRead())
+                {
                 if (_lockdown) return false;
 
                 // Cell lock mode for add/change. For a REAL value store, adding or replacing the
@@ -172,15 +261,23 @@ namespace AECC.Locking
                     if (lockedMode) lockToken = token; else token.Dispose();
                     return false; // changed
                 }
+                }
             }
+            finally { LeaveFreeze(counted); }
         }
 
         private bool TryRemove(TKey key, out TValue value, Action<TKey, TValue> action = null)
         {
             value = default(TValue);
-            if (_lockdown) return false;
-            using (GlobalRead())
+            // NOTE: regular Remove deliberately works during soft lockdown (matches the original
+            // contract "Get* and Remove* keep working" — EntityComponentStorage.OnEntityDelete enters
+            // lockdown and then drains components via Remove). The HARD freeze (LockStorage) does gate
+            // remove, via the freeze barrier below.
+            bool counted = EnterFreeze();
+            try
             {
+                using (GlobalRead())
+                {
                 while (true)
                 {
                     Cell dvalue;
@@ -200,21 +297,26 @@ namespace AECC.Locking
                     token.Dispose();
                     return true;
                 }
+                }
             }
+            finally { LeaveFreeze(counted); }
         }
 
         public bool TryGetLockedElement(TKey key, out TValue value, out RWToken lockToken, bool? overrideLockValue = null)
         {
             lockToken = default(RWToken);
             value = default(TValue);
-            using (GlobalRead())
+            bool wlock = overrideLockValue != null ? (bool)overrideLockValue : LockValue;
+            bool counted = wlock ? EnterFreeze() : false; // only write-lock acquisition is gated by a hard freeze
+            try
             {
+                using (GlobalRead())
+                {
                 while (true)
                 {
                     Cell dvalue;
                     if (!_dict.TryGetValue(key, out dvalue)) return false;
 
-                    bool wlock = overrideLockValue != null ? (bool)overrideLockValue : LockValue;
                     RWToken token = CellLock(dvalue, wlock);
                     Cell check;
                     if (!_dict.TryGetValue(key, out check) || !ReferenceEquals(check, dvalue))
@@ -226,7 +328,9 @@ namespace AECC.Locking
                     lockToken = token;
                     return true;
                 }
+                }
             }
+            finally { if (wlock) LeaveFreeze(counted); }
         }
 
         /// <summary>Shared (read) absence hold — many holders may coexist; an add of the key is excluded.</summary>
@@ -244,19 +348,24 @@ namespace AECC.Locking
             if (_lockdown) return false;
             if (!HoldKeys) return false;
 
-            RWToken rd;
-            // exclusive ? write-lock the holding cell : read-lock it (shared among holders)
-            _keysHolding.TryAddChangeLockedElement(key, false, true, out rd, exclusive);
-            if (rd.IsReal)
+            bool counted = EnterFreeze();
+            try
             {
-                if (!_dict.ContainsKey(key)) // lock-free; never re-acquire a storage lock while holding the holding cell
+                RWToken rd;
+                // exclusive ? write-lock the holding cell : read-lock it (shared among holders)
+                _keysHolding.TryAddChangeLockedElement(key, false, true, out rd, exclusive);
+                if (rd.IsReal)
                 {
-                    lockToken = rd;
-                    return true;
+                    if (!_dict.ContainsKey(key)) // lock-free; never re-acquire a storage lock while holding the holding cell
+                    {
+                        lockToken = rd;
+                        return true;
+                    }
                 }
+                rd.Dispose();
+                return false;
             }
-            rd.Dispose();
-            return false;
+            finally { LeaveFreeze(counted); }
         }
 
         // ───────── transactional executors (ported 1:1) ─────────
@@ -381,21 +490,18 @@ namespace AECC.Locking
             }
         }
 
-        public RWToken LockStorage() { _lockdown = true; return new RWToken(this, this, GLOBAL_SLOT, 1); }
+        public RWToken LockStorage() { return AcquireFreeze(); }
 
-        public void Clear() { using (GlobalWrite()) { _dict.Clear(); } }
+        public void Clear() { using (AcquireFreeze()) { _dict.Clear(); } }
 
         public IDictionary<TKey, TValue> ClearSnapshot()
         {
             IDictionary<TKey, TValue> result;
-            using (GlobalWrite())
+            using (AcquireFreeze()) // hard freeze: drains in-flight mutators, then snapshots+clears atomically
             {
                 result = new Dictionary<TKey, TValue>(_dict.Count);
                 foreach (var kv in _dict)
-                {
-                    using (CellLock(kv.Value, true)) { }
                     result[kv.Key] = kv.Value.Value;
-                }
                 _dict.Clear();
             }
             return result;
