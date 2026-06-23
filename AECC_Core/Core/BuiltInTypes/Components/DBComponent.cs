@@ -975,10 +975,11 @@ namespace AECC.Core.BuiltInTypes.Components
                                 components[unserComp.instanceId] = (unserComp, component.componentState);
                                 ComponentOwners[unserComp.instanceId] = entityOwner.instanceId;
                                 unserComp.AfterDeserialization();
-                                if (component.componentState != ComponentState.Created)
-                                {
-                                    unserComp.AddedReaction(unserComp.ownerEntity);
-                                }
+                                // Реакции эмитятся единожды в AfterDeserializeDB по componentState
+                                // (Created→Added, Changed→Change, Removed→Removing). Здесь только
+                                // материализация компонента в DB — без дублирующей AddedReaction,
+                                // которая раньше давала двойную реакцию для Changed и "мигание"
+                                // (Added→Removing) для Removed.
                                 addedCount++;
                             }
                             else
