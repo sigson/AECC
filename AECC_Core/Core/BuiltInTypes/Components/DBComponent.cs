@@ -100,6 +100,23 @@ namespace AECC.Core.BuiltInTypes.Components
             return ec != null ? (IDisposable)ec.StabilizationLocker.WriteLock() : null;
         }
 
+        /// <summary>
+        /// Debug-only инвариант: мутация DB должна выполняться под write-гейтом StabilizationLocker.
+        /// До привязки к сущности (ownerEntity == null) и в OneThreadMode (Mock-лок) проверка не
+        /// применяется — там доступ однопоточный по контракту. В Release вырезается компилятором.
+        /// </summary>
+        [System.Diagnostics.Conditional("DEBUG")]
+        private void AssertDbWriteGate()
+        {
+            if (ownerEntity == null || Defines.OneThreadMode)
+                return;
+            var rw = ownerEntity.entityComponents?.StabilizationLocker;
+            if (rw?.lockobj == null)
+                return;
+            System.Diagnostics.Debug.Assert(rw.lockobj.IsWriteLockHeld,
+                "ComponentsDBComponent: мутация DB вне write-гейта StabilizationLocker");
+        }
+
         public enum ComponentState
         {
             Created,
@@ -213,6 +230,7 @@ namespace AECC.Core.BuiltInTypes.Components
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
                 {
+                    this.AssertDbWriteGate();
                     DB.TryGetValue(ownerComponent.instanceId, out components);
                     if (components == null)
                         components = new Dictionary<long, (ECSComponent, ComponentState)>();
@@ -251,6 +269,7 @@ namespace AECC.Core.BuiltInTypes.Components
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
                 {
+                    this.AssertDbWriteGate();
                     DB.TryGetValue(ownerComponent.instanceId, out components);
                     if (components == null)
                         components = new Dictionary<long, (ECSComponent, ComponentState)>();
@@ -440,6 +459,7 @@ namespace AECC.Core.BuiltInTypes.Components
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
                 {
+                    this.AssertDbWriteGate();
                     long owner = 0;
                     if (ownerComponent == null)
                     {
@@ -477,6 +497,7 @@ namespace AECC.Core.BuiltInTypes.Components
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
                 {
+                    this.AssertDbWriteGate();
                     long owner = 0;
                     if (ownerComponent == null)
                     {
@@ -541,6 +562,7 @@ namespace AECC.Core.BuiltInTypes.Components
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
                 {
+                    this.AssertDbWriteGate();
                     List<long> owners = new List<long>();
                     if (ownerComponent == null)
                     {
@@ -594,6 +616,7 @@ namespace AECC.Core.BuiltInTypes.Components
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
                 {
+                    this.AssertDbWriteGate();
                     List<long> owners = new List<long>();
                     if (ownerComponent == null)
                     {
