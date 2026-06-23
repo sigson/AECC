@@ -39,9 +39,6 @@ namespace AECC.Core
         public Dictionary<long, ECSComponentGroup> ComponentGroups = null;//todo: concurrent replace to normal
         [System.NonSerialized]
         [IgnoreDataMember]
-        public List<Action<ECSEntity, ECSComponent>> OnChangeHandlers = null;
-        [System.NonSerialized]
-        [IgnoreDataMember]
         public bool Unregistered = true;
         [System.NonSerialized]
         [IgnoreDataMember]
@@ -87,30 +84,6 @@ namespace AECC.Core
         {
             //componentManagers.ownerComponent = this;
             //StateReactionQueue = new PriorityEventQueue<StateReactionType, Action>(new List<StateReactionType>() { StateReactionType.Added, StateReactionType.Changed, StateReactionType.Removed }, 1, x => x + 2);
-        }
-
-        public List<Action<ECSEntity, ECSComponent>> GetOnChangeComponentCallback()
-        {
-            if (ObjectType == null)
-            {
-                ObjectType = GetType();
-            }
-            try
-            {
-                if(OnChangeHandlers == null)
-                {
-                    OnChangeHandlers = ECSComponentManager.OnChangeCallbacksDB[this.GetId()];
-                }
-                
-                return OnChangeHandlers;
-            }
-            catch
-            {
-                NLogger.Log(ObjectType);
-                NLogger.Log("Type not has callbacks");
-                return null;
-            }
-            
         }
 
         public void DirectiveSetChanged()
@@ -336,7 +309,6 @@ namespace AECC.Core
         public void OnRemove()
         {
             if (ComponentGroups != null) ComponentGroups.ClearI(this.SerialLocker);
-            if (OnChangeHandlers != null) OnChangeHandlers.Clear();
             ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
 
             // Сброс состояния для переиспользования компонента
@@ -349,11 +321,6 @@ namespace AECC.Core
                 AlreadyRemovedReaction = false;
             }
         }
-        public void RunOnChangeCallbacks(ECSEntity parentEntity)
-        {
-            
-        }
-
         public object Clone() => MemberwiseClone();
 
         public class ComponentLifecycleState

@@ -25,7 +25,6 @@ namespace AECC.Core.BuiltInTypes.Components
     public class DBComponent : ECSComponent
     {
         static public new long Id { get; set; } = 11;
-        static public new System.Collections.Generic.List<System.Action> StaticOnChangeHandlers { get; set; }
 
         [NonSerialized]
         [IgnoreDataMember]
@@ -75,7 +74,6 @@ namespace AECC.Core.BuiltInTypes.Components
     public class ComponentsDBComponent : DBComponent
     {
         static public new long Id { get; set; } = 12;
-        static public new System.Collections.Generic.List<System.Action> StaticOnChangeHandlers { get; set; }
 
         /// <summary>
         /// Глубина выполнения UnserializeDB (re-entrancy-safe). Заменяет эвристику по StackTrace:

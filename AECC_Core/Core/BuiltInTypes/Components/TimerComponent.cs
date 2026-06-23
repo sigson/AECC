@@ -20,7 +20,6 @@ namespace AECC.Core.BuiltInTypes.Components
     public class TimerComponent : ECSComponent
     {
         static public new long Id { get; set; } = 10;
-        static public new System.Collections.Generic.List<System.Action> StaticOnChangeHandlers { get; set; }
         [System.NonSerialized]
         public TimerEx componentTimer = new TimerEx();
         public double timerAwait = 0;
