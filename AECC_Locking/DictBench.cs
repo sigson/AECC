@@ -307,7 +307,7 @@ namespace AECC.Locking.Benchmark
         public static void Run(int dicts, int keys, int threads, int durationMs)
         {
             Console.WriteLine("================ AECC dictionary performance comparison ================");
-            Console.WriteLine(">>> dictbench build: v1 <<<");
+            Console.WriteLine(">>> dictbench build: v2  (RWCell reentry fast-path lightened; bench logic unchanged) <<<");
             Console.WriteLine("dicts={0}  keys={1}  threads={2}  duration={3}ms/impl", dicts, keys, threads, durationMs);
             Console.WriteLine("legacy = ReaderWriterLockSlim per cell + global RWLS + per-key hold RWLS + token-per-op");
             Console.WriteLine("new    = inline packed-long per cell (RWCell), no global lock, zero-alloc struct token");

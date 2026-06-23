@@ -33,9 +33,8 @@ namespace AECC.Core.BuiltInTypes.Components
 
         public Dictionary<IECSObjectPathContainer, List<dbRow>> serializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
 
-        public virtual SharedLock.LockToken SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
+        public virtual void SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
         {
-            return null;
         }
         
         public virtual void AfterSerializationDB(bool clearAfterSerializaion = true)
@@ -77,6 +76,29 @@ namespace AECC.Core.BuiltInTypes.Components
     {
         static public new long Id { get; set; } = 12;
         static public new System.Collections.Generic.List<System.Action> StaticOnChangeHandlers { get; set; }
+
+        /// <summary>
+        /// Глубина выполнения UnserializeDB (re-entrancy-safe). Заменяет эвристику по StackTrace:
+        /// пока > 0, отсутствие компонента в БД во время клиентской десериализации — ожидаемо.
+        /// </summary>
+        [System.NonSerialized]
+        private int _unserializeDepth = 0;
+
+        /// <summary>
+        /// Единый авторитет синхронизации DB — StabilizationLocker сущности-владельца.
+        /// До привязки к сущности (фабричный контекст) ownerEntity == null и доступ
+        /// гарантированно однопоточный, поэтому реальный захват не нужен (no-op scope).
+        /// </summary>
+        private IDisposable DbReadScope()
+        {
+            var ec = this.ownerEntity?.entityComponents;
+            return ec != null ? (IDisposable)ec.StabilizationLocker.ReadLock() : null;
+        }
+        private IDisposable DbWriteScope()
+        {
+            var ec = this.ownerEntity?.entityComponents;
+            return ec != null ? (IDisposable)ec.StabilizationLocker.WriteLock() : null;
+        }
 
         public enum ComponentState
         {
@@ -190,7 +212,6 @@ namespace AECC.Core.BuiltInTypes.Components
             
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
-                using (this.monoLocker.Lock())
                 {
                     DB.TryGetValue(ownerComponent.instanceId, out components);
                     if (components == null)
@@ -229,7 +250,6 @@ namespace AECC.Core.BuiltInTypes.Components
             
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
-                using (this.monoLocker.Lock())
                 {
                     DB.TryGetValue(ownerComponent.instanceId, out components);
                     if (components == null)
@@ -328,14 +348,14 @@ namespace AECC.Core.BuiltInTypes.Components
         
         public virtual (ECSComponent, ComponentState) GetComponent(long componentId, IECSObject ownerComponent = null)
         {
-            using (this.monoLocker.Lock())
+            using (this.DbReadScope())
             {
                 long owner = 0;
                 if (ownerComponent == null)
                 {
                     if (!ComponentOwners.TryGetValue(componentId, out owner))
                     {
-                        if(this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client && new StackTrace().ToString().Contains("UnserializeDB"))
+                        if(this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client && _unserializeDepth > 0)
                         {
                             NLogger.Log("SETUP_UNSERIALIZE error get component from db");
                         }
@@ -375,7 +395,7 @@ namespace AECC.Core.BuiltInTypes.Components
         public virtual List<(ECSComponent, ComponentState)> GetComponentsByType(List<long> componentTypeId, IECSObject ownerComponent = null)
         {
             List<(ECSComponent, ComponentState)> result = new List<(ECSComponent, ComponentState)>();
-            using (this.monoLocker.Lock())
+            using (this.DbReadScope())
             {
                 List<long> owners = new List<long>();
                 if (ownerComponent == null)
@@ -419,7 +439,6 @@ namespace AECC.Core.BuiltInTypes.Components
             
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
-                using (this.monoLocker.Lock())
                 {
                     long owner = 0;
                     if (ownerComponent == null)
@@ -457,7 +476,6 @@ namespace AECC.Core.BuiltInTypes.Components
             
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
-                using (this.monoLocker.Lock())
                 {
                     long owner = 0;
                     if (ownerComponent == null)
@@ -522,7 +540,6 @@ namespace AECC.Core.BuiltInTypes.Components
             
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
-                using (this.monoLocker.Lock())
                 {
                     List<long> owners = new List<long>();
                     if (ownerComponent == null)
@@ -576,7 +593,6 @@ namespace AECC.Core.BuiltInTypes.Components
             
             using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
             {
-                using (this.monoLocker.Lock())
                 {
                     List<long> owners = new List<long>();
                     if (ownerComponent == null)
@@ -624,19 +640,21 @@ namespace AECC.Core.BuiltInTypes.Components
         {
             try
             {
-                var changes = new List<(ECSComponent, ComponentState, string)>();
-                //var dbsnap = this.DB.SnapshotI(this.SerialLocker)[instanceId];
-                if(this.DB.SnapshotI(this.SerialLocker).TryGetValue(instanceId, out var dbsnap))
+                using (this.DbWriteScope())
                 {
-                    foreach (var inter in dbsnap.ToList())
+                    var changes = new List<(ECSComponent, ComponentState, string)>();
+                    if(this.DB.SnapshotI(null).TryGetValue(instanceId, out var dbsnap))
                     {
-                        changes.Add((inter.Value.Item1, ComponentState.Removed, "Removed"));
-                        this.RemoveComponent(inter.Value.Item1.instanceId);
-                    }
-                    
-                    if (LoggingLevel >= DBLoggingLevel.CountAndTypes)
-                    {
-                        LogDBState($"RemoveComponentsByOwner(Owner: {instanceId})", changes);
+                        foreach (var inter in dbsnap.ToList())
+                        {
+                            changes.Add((inter.Value.Item1, ComponentState.Removed, "Removed"));
+                            this.RemoveComponent(inter.Value.Item1.instanceId);
+                        }
+
+                        if (LoggingLevel >= DBLoggingLevel.CountAndTypes)
+                        {
+                            LogDBState($"RemoveComponentsByOwner(Owner: {instanceId})", changes);
+                        }
                     }
                 }
             }
@@ -650,19 +668,22 @@ namespace AECC.Core.BuiltInTypes.Components
         {
             try
             {
-                var changes = new List<(ECSComponent, ComponentState, string)>();
-                var dbsnap = this.DB.SnapshotI(this.SerialLocker);
-                
-                foreach (var dbinter in dbsnap)
+                using (this.DbWriteScope())
                 {
-                    foreach (var inter in dbinter.Value.SnapshotI(this.SerialLocker))
+                    var changes = new List<(ECSComponent, ComponentState, string)>();
+                    var dbsnap = this.DB.SnapshotI(null);
+
+                    foreach (var dbinter in dbsnap)
                     {
-                        changes.Add((inter.Value.Item1, ComponentState.Removed, "Cleared"));
-                        this.RemoveComponent(inter.Value.Item1.instanceId);
+                        foreach (var inter in dbinter.Value.SnapshotI(null))
+                        {
+                            changes.Add((inter.Value.Item1, ComponentState.Removed, "Cleared"));
+                            this.RemoveComponent(inter.Value.Item1.instanceId);
+                        }
                     }
+
+                    LogDBState("ClearDB", changes);
                 }
-                
-                LogDBState("ClearDB", changes);
             }
             catch (Exception e)
             {
@@ -672,11 +693,11 @@ namespace AECC.Core.BuiltInTypes.Components
 
         #endregion
 
-        public override SharedLock.LockToken SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
+        public override void SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
         {
             Dictionary<IECSObjectPathContainer, List<dbRow>> newSerializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
-            var sharelock = this.monoLocker.Lock();
-            //using (this.monoLocker.Lock())
+            // Стабильность DB на время сериализации обеспечивается внешним ReadLock
+            // (EntityNetSerializer.SlicedSerialize) + однопоточным контрактом DB-компонента.
             {
                 serializedDB.Clear();
                 List<long> errorChanged = new List<long>();
@@ -781,13 +802,10 @@ namespace AECC.Core.BuiltInTypes.Components
                 }
                 NLogger.Log($"[DB UnserializeDB] Starting deserialization of {newSerializedDB.Count} owners with elements:\n {elementsOwners} \n AND HAS NullEntityOwner:\n {elementsOwnersEO}");
             }
-
-            return sharelock;
         }
 
         public override void AfterSerializationDB(bool clearAfterSerializaion = true)
         {
-            using (this.monoLocker.Lock())
             {
                 if (clearAfterSerializaion)
                 {
@@ -831,11 +849,11 @@ namespace AECC.Core.BuiltInTypes.Components
         [System.NonSerialized]
         public DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)> serializedDBNonEO = new DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)>();
 
-        [System.NonSerialized]
-        public Dictionary<IECSObjectPathContainer, List<dbRow>> afterDeserializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
-
         public override void UnserializeDB(bool retryNullEntityOwner = false)
         {
+            _unserializeDepth++;
+            try
+            {
             lock (serializedDB)
             {
                 if (LoggingLevel >= DBLoggingLevel.CountOnly)
@@ -986,8 +1004,12 @@ namespace AECC.Core.BuiltInTypes.Components
                 }
 
                 AfterDeserializeDB();
-                afterDeserializedDB = serializedDB;
-                serializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
+                serializedDB.Clear();
+            }
+            }
+            finally
+            {
+                _unserializeDepth--;
             }
         }
 

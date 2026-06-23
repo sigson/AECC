@@ -74,16 +74,10 @@ namespace AECC.Core
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
             }
+            // PHASE 3b: async add path removed; asyncMode is retained only for signature stability.
             foreach (var component in eCSComponents)
             {
-                if(asyncMode)
-                {
-                    this.AddComponentSilentAsync(component).Wait();
-                }
-                else
-                {
-                    this.AddComponentSilent(component);
-                }
+                this.AddComponentSilent(component);
             }
         }
 

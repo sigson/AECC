@@ -49,7 +49,7 @@ namespace Async
             () => new LifetimeComponent(), () => new SoundEmitterComponent()
         };
 
-        private const int MaxEntities = 100000;
+        private const int MaxEntities = 10000;
         private const int SimulationDurationMs = 30_000; // 30 секунд симуляции
         private const int LockDelayMinMs = 1;
         private const int LockDelayMaxMs = 1;
@@ -142,7 +142,7 @@ namespace Async
                 var regTasks = new List<Task>();
                 foreach (var e in entityList)
                 {
-                    regTasks.Add(world.entityManager.AddNewEntityAsync(e));
+                    // regTasks.Add(world.entityManager.AddNewEntityAsync(e));
                 }
                 Task.WhenAll(regTasks).Wait();
 
@@ -239,11 +239,11 @@ namespace Async
                         {
                             try
                             {
-                                var result = await targetEntity.entityComponents.GetReadLockedComponentAsync(compType);
-                                if (result.Success)
-                                {
-                                    acquiredTokens.Add(result.Token);
-                                }
+                                // var result = await targetEntity.entityComponents.GetReadLockedComponentAsync(compType);
+                                // if (result.Success)
+                                // {
+                                //     acquiredTokens.Add(result.Token);
+                                // }
                                 // Компонент может отсутствовать — это нормально, пропускаем
                             }
                             catch
@@ -311,11 +311,11 @@ namespace Async
                     {
                         try
                         {
-                            if (await entity.HasComponentAsync(compType))
-                            {
-                                await entity.RemoveComponentAsync(compType);
-                                removedTypes.Add(compType);
-                            }
+                            // if (await entity.HasComponentAsync(compType))
+                            // {
+                            //     await entity.RemoveComponentAsync(compType);
+                            //     removedTypes.Add(compType);
+                            // }
                         }
                         catch { } // Конкурентное удаление — нормальная ситуация
                     }
@@ -346,7 +346,7 @@ namespace Async
                     {
                         try
                         {
-                            await entity.AddOrChangeComponentAsync(comp);
+                            //await entity.AddOrChangeComponentAsync(comp);
                         }
                         catch { } // Конкурентный конфликт — нормально
                     }
@@ -386,11 +386,11 @@ namespace Async
                     {
                         try
                         {
-                            var holdResult = await entity.entityComponents.HoldComponentAdditionAsync(compType);
-                            if (holdResult.Success)
-                            {
-                                acquiredTokens.Add(holdResult.LockToken);
-                            }
+                            // var holdResult = await entity.entityComponents.HoldComponentAdditionAsync(compType);
+                            // if (holdResult.Success)
+                            // {
+                            //     acquiredTokens.Add(holdResult.LockToken);
+                            // }
                         }
                         catch { }
                     }

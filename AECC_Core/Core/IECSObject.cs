@@ -23,46 +23,10 @@ namespace AECC.Core
 {
     [System.Serializable]
     [TypeUid(0)]
-    public class IECSObject
+    public class IECSObject : IDObject
     {
-        static public long Id { get; set; } = 0;
-        static public long GId<T>() => EntitySerializer.TypeIdStorage[typeof(T)];
-        public long instanceId = Guid.NewGuid().GuidToLongR();
+        static public new long Id { get; set; } = 0;
 
-        public long ECSWorldOwnerId = 0;
-        [IgnoreDataMember]
-        [System.NonSerialized]
-        public ECSWorld ECSWorldOwnerCache = null;
-        [IgnoreDataMember]
-        public ECSWorld ECSWorldOwner {
-            get {
-                if (ECSWorldOwnerId == 0)
-                {
-                    if (!Defines.IgnoreNonDangerousExceptions)
-                        NLogger.LogError($"IECSObject '{instanceId}: {this.GetType().Name}': ECSWorldOwnerId == 0");
-                    return null;
-                }
-                else
-                {
-                    if(ECSWorldOwnerCache != null && ECSWorldOwnerCache.instanceId == ECSWorldOwnerId)
-                    {
-                        return ECSWorldOwnerCache;
-                    }
-                }
-                ECSWorldOwnerCache = ECSWorld.GetWorld(ECSWorldOwnerId);
-                return ECSWorldOwnerCache;
-            }
-            set
-            {
-                ECSWorldOwnerId = value.instanceId;
-                ECSWorldOwnerCache = value;
-            }
-        }
-
-        [System.NonSerialized]
-        public Type ObjectType;
-        [System.NonSerialized]
-        protected long ReflectionId = 0;
         [System.NonSerialized]
         public object SerialLocker = new object();
         [System.NonSerialized]
@@ -363,7 +327,7 @@ namespace AECC.Core
         {
             if (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server || this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Offline)
             {
-                lock (SerialLocker)
+                using (new SharedLock.Scope(SerialLocker))
                 {
                     if (HasChildChanges)
                         DeserializationProcess();
@@ -372,7 +336,7 @@ namespace AECC.Core
             }
             else
             {
-                lock (SerialLocker)
+                using (new SharedLock.Scope(SerialLocker))
                 {
                     bool deserres = true;
                     if (HasChildChanges)
@@ -405,28 +369,6 @@ namespace AECC.Core
         protected virtual void AfterDeserializationImpl()
         {
 
-        }
-
-        public long GetId()
-        {
-            if (Id == 0)
-                try
-                {
-                    if (ObjectType == null)
-                    {
-                        ObjectType = GetType();
-                    }
-                    if (ReflectionId == 0)
-                        ReflectionId = ObjectType.GetCustomAttribute<TypeUidAttribute>().Id;
-                    return ReflectionId;
-                }
-                catch
-                {
-                    NLogger.Error(this.GetType().ToString() + "Could not find Id field");
-                    return 0;
-                }
-            else
-                return Id;
         }
 
         public enum IECSObjectSerializedStateMode

@@ -18,57 +18,83 @@ namespace AECC.Extensions
 
     public static class InterlockedCollection
     {
-        //private static HashSet <object> lockDB = new HashSet <object> ();
+        /// <summary>
+        /// Zero-alloc вложенная блокировка (внешний координирующий + внутренний по коллекции).
+        /// В OneThreadMode реального захвата нет. Monitor реентрантен, поэтому повтор того же
+        /// объекта во внешнем и внутреннем гейте безопасен. null-гейт пропускается (внешняя
+        /// блокировка теперь обязанность вызывающего; целостность коллекции всегда защищена
+        /// внутренним гейтом).
+        /// </summary>
+        private readonly struct DualGate : IDisposable
+        {
+            private readonly object _outer;
+            private readonly object _inner;
+            private readonly bool _outerTaken;
+            private readonly bool _innerTaken;
+
+            public DualGate(object outer, object inner)
+            {
+                _outer = outer;
+                _inner = inner;
+                _outerTaken = false;
+                _innerTaken = false;
+                if (Defines.OneThreadMode)
+                    return;
+                if (outer != null)
+                {
+                    bool t = false;
+                    Monitor.Enter(outer, ref t);
+                    _outerTaken = t;
+                }
+                if (inner != null)
+                {
+                    bool t = false;
+                    Monitor.Enter(inner, ref t);
+                    _innerTaken = t;
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_innerTaken) Monitor.Exit(_inner);
+                if (_outerTaken) Monitor.Exit(_outer);
+            }
+        }
+
         #region dictionary
         public static bool AddI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, TKey key, TValue value, object externalLockerObject = null)
         {
-            if(externalLockerObject == null)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                if(value is IECSObject)
-                {
-                    externalLockerObject = (value as IECSObject).SerialLocker;
-                }
-            }
-            lock (externalLockerObject)
-            {
-                lock (dictionary)
-                {
-                    if (!dictionary.ContainsKey(key))
-                        dictionary[key] = value;
-                    else
-                        return false;
-                }
+                if (!dictionary.ContainsKey(key))
+                    dictionary[key] = value;
+                else
+                    return false;
             }
             return true;
         }
 
         public static TValue GetI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, TKey key, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                lock (dictionary)
-                {
-                    if (dictionary.ContainsKey(key))
-                        return dictionary[key];
-                    else
-                        return default(TValue);
-                }
+                if (dictionary.ContainsKey(key))
+                    return dictionary[key];
+                else
+                    return default(TValue);
             }
         }
 
         public static bool TryGetValueI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, TKey key, out TValue value, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                lock (dictionary)
+                if (dictionary.ContainsKey(key))
+                    value = dictionary[key];
+                else
                 {
-                    if (dictionary.ContainsKey(key))
-                        value = dictionary[key];
-                    else
-                    {
-                        value = default(TValue);
-                        return false;
-                    }
+                    value = default(TValue);
+                    return false;
                 }
             }
             return true;
@@ -76,64 +102,42 @@ namespace AECC.Extensions
 
         public static void SetI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, TKey key, TValue value, object externalLockerObject = null)
         {
-            if (externalLockerObject == null)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                if (value is IECSObject)
-                {
-                    externalLockerObject = (value as IECSObject).SerialLocker;
-                }
-            }
-            lock (externalLockerObject)
-            {
-                lock (dictionary)
-                {
-                    dictionary[key]=value;
-                }
+                dictionary[key] = value;
             }
         }
 
         public static bool RemoveI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, TKey key, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                lock (dictionary)
-                {
-                    return dictionary.Remove(key);
-                }
+                return dictionary.Remove(key);
             }
         }
 
         public static bool ClearI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                lock (dictionary)
-                {
-                    dictionary.Clear();
-                }
+                dictionary.Clear();
             }
             return true;
         }
 
         public static IDictionary<TKey, TValue> SnapshotI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                lock (dictionary)
-                {
-                    return new Dictionary<TKey, TValue>(dictionary);
-                }
+                return new Dictionary<TKey, TValue>(dictionary);
             }
         }
 
         public static bool ContainsKeyI<TKey, TValue>(this IDictionary<TKey, TValue> dictionary, TKey key, object externalLockerObject)
         {
-            lock(externalLockerObject)
+            using (new DualGate(externalLockerObject, dictionary))
             {
-                lock (dictionary)
-                {
-                    return dictionary.ContainsKey(key);
-                }
+                return dictionary.ContainsKey(key);
             }
         }
         #endregion
@@ -141,96 +145,65 @@ namespace AECC.Extensions
         #region list
         public static void AddI<TValue>(this ICollection<TValue> list, TValue value, object externalLockerObject = null)
         {
-            if (externalLockerObject == null)
+            using (new DualGate(externalLockerObject, list))
             {
-                if (value is IECSObject)
-                {
-                    externalLockerObject = (value as IECSObject).SerialLocker;
-                }
-            }
-            lock (externalLockerObject)
-            {
-                lock (list)
-                {
-                    list.Add(value);
-                }
+                list.Add(value);
             }
         }
 
         public static void ClearI<TValue>(this ICollection<TValue> list, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    list.Clear();
-                }
+                list.Clear();
             }
         }
 
         public static List<TValue> SnapshotI<TValue>(this ICollection<TValue> list, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    return new List<TValue>(list);
-                }
+                return new List<TValue>(list);
             }
         }
 
         public static bool RemoveI<TValue>(this ICollection<TValue> list, TValue value, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    return list.Remove(value);
-                }
+                return list.Remove(value);
             }
         }
 
         public static void InsertI<TValue>(this IList<TValue> list, int index, TValue insValue, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    list.Insert(index, insValue);
-                }
+                list.Insert(index, insValue);
             }
         }
 
         public static void RemoveAtI<TValue>(this IList<TValue> list, int index, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    list.RemoveAt(index);
-                }
+                list.RemoveAt(index);
             }
         }
 
         public static bool ContainsI<TValue>(this ICollection<TValue> list, TValue value, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    return list.Contains( value);
-                }
+                return list.Contains(value);
             }
         }
 
         public static void SetI<TValue>(this IList<TValue> list, int index, TValue newValue, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    list[index] = newValue;
-                }
+                list[index] = newValue;
             }
         }
 
@@ -255,62 +228,50 @@ namespace AECC.Extensions
         }
         public static void SetI<TValue>(this ICollection<TValue> list, int index, TValue newValue, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
+                if (index < 0 || index > list.Count)
+                    throw new ArgumentOutOfRangeException(nameof(index), "Index was out of range. Must be non-negative and less than the size of the collection.");
+
+                if (list is IList<TValue> ilist)
                 {
-                    if (index < 0 || index > list.Count)
-                        throw new ArgumentOutOfRangeException(nameof(index), "Index was out of range. Must be non-negative and less than the size of the collection.");
+                    ilist.Insert(index, newValue);
+                }
+                else
+                {
+                    List<TValue> temp = new List<TValue>(list);
 
-                    if (list is IList<TValue> ilist)
-                    {
-                        ilist.Insert(index, newValue);
-                    }
-                    else
-                    {
-                        List<TValue> temp = new List<TValue>(list);
+                    list.Clear();
 
-                        list.Clear();
-
-                        list.AddRange(temp.Take(index));
-                        list.Add(newValue);
-                        list.AddRange(temp.Skip(index));
-                    }
+                    list.AddRange(temp.Take(index));
+                    list.Add(newValue);
+                    list.AddRange(temp.Skip(index));
                 }
             }
         }
 
         public static TValue GetI<TValue>(this IList<TValue> list, int index, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    return list[index];
-                }
+                return list[index];
             }
         }
 
         public static TValue GetI<TValue>(this ICollection<TValue> list, int index, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    return list.ElementAt(index);
-                }
+                return list.ElementAt(index);
             }
         }
         #endregion
 
         public static HashSet<TValue> SnapshotI<TValue>(this HashSet<TValue> list, object externalLockerObject)
         {
-            lock (externalLockerObject)
+            using (new DualGate(externalLockerObject, list))
             {
-                lock (list)
-                {
-                    return new HashSet<TValue>(list);
-                }
+                return new HashSet<TValue>(list);
             }
         }
     }

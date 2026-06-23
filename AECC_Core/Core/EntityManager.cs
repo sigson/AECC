@@ -20,12 +20,7 @@ namespace AECC.Core
         // ReaderWriterLockSlim is gone, the cell is a ~32 B node with an inline `long` lock.
         // HoldKeys is OFF here (entity storage never holds keys by absence). Returns RWToken now.
         public LockedDictionarySlim<long, ECSEntity> EntityStorage = new LockedDictionarySlim<long, ECSEntity>();
-        // PHASE 1: async mirror is no longer the recommended path (removed entirely in Phase 3).
-        // It is kept compiling here but is NOT populated by the default (sync) AddNewEntity path.
-        public LockedDictionaryAsync<long, ECSEntity> EntityStorageAsync = new LockedDictionaryAsync<long, ECSEntity>();
         public LockedDictionarySlim<string, ECSEntity> PreinitializedEntities = new LockedDictionarySlim<string, ECSEntity>();
-
-        public bool isAsync => EntityStorageAsync.GetCountAsync().Result > 0;
 
         public GraphSearchEngine graphSearchEngine;
 
@@ -92,12 +87,8 @@ namespace AECC.Core
             if (redirect != null) return redirect.TryGetEntitySyncronized(instanceEntityId, out rentity);
 
             if(EntityStorage.TryGetValue(instanceEntityId, out rentity)) return true;
-            var asyncResult = EntityStorageAsync.TryGetValueAsync(instanceEntityId).Result;
-            if(asyncResult.Success && asyncResult.Value != null)
-            {
-                rentity = asyncResult.Value;
-                return true;
-            }
+            // PHASE 3a: async storage is no longer populated (it is removed entirely in 3b).
+            // Dropping the sync-over-async fallback removes a .Result hazard on every cache miss.
             return false;
         }
 
@@ -106,29 +97,8 @@ namespace AECC.Core
             var redirect = ResolveRedirect();
             if (redirect != null) return redirect.ContainsEntitySyncronized(instanceEntityId);
 
-            if (EntityStorage.ContainsKey(instanceEntityId)) return true;
-            return EntityStorageAsync.ContainsKeyAsync(instanceEntityId).Result;
-        } 
-
-        public async Task<ECSEntity> TryGetEntityAsync(long instanceEntityId)
-        {
-            var redirect = ResolveRedirect();
-            if (redirect != null) return await redirect.TryGetEntityAsync(instanceEntityId);
-
-            var asyncResult = await EntityStorageAsync.TryGetValueAsync(instanceEntityId);
-            if (asyncResult.Success && asyncResult.Value != null) return asyncResult.Value;
-            if (EntityStorage.TryGetValue(instanceEntityId, out var rentity)) return rentity;
-            return null;
-        }
-
-        public async Task<bool> ContainsEntityAsync(long instanceEntityId)
-        {
-            var redirect = ResolveRedirect();
-            if (redirect != null) return await redirect.ContainsEntityAsync(instanceEntityId);
-
-            if (await EntityStorageAsync.ContainsKeyAsync(instanceEntityId)) return true;
             return EntityStorage.ContainsKey(instanceEntityId);
-        }
+        } 
 
         public ECSEntity TryGetEntity(long instanceEntityId)
         {
@@ -261,50 +231,12 @@ namespace AECC.Core
             return true;
         }
 
-        public async Task<bool> AddNewEntityAsync(ECSEntity Entity, bool silent = false)
-        {
-            // Проверка: Редирект для новых вызовов
-            var redirect = ResolveRedirect();
-            if (redirect != null)
-                return await redirect.AddNewEntityAsync(Entity, silent);
-
-            bool added = false;
-            Entity.manager = this;
-            Entity.ECSWorldOwner = world;
-            if (!await this.EntityStorageAsync.ContainsKeyAsync(Entity.instanceId))
-            {
-                await EntityStorageAsync.ExecuteOnAddLockedAsync(Entity.instanceId, Entity, async (key, newcomponent) =>
-                {
-                    // Rescue для проснувшихся потоков.
-                    // Поток заблокировался на GlobalLocker внутри TryAddOrChangeAsync.
-                    // Сквош прошёл, редирект установлен, GlobalLocker освобождён.
-                    // Поток проснулся — TryAddOrChangeAsync добавил сущность в мёртвый async-storage.
-                    // Мы внутри callback с element-level lock (НЕ GlobalLocker) → безопасно UnsafeRemove.
-                    var innerRedirect = ResolveRedirect();
-                    if (innerRedirect != null)
-                    {
-                        // Забираем из мёртвого async-storage (UnsafeRemove работает на ConcurrentDictionary напрямую,
-                        // не трогая GlobalLocker — безопасно вызывать из-под element lock)
-                        EntityStorageAsync.UnsafeRemove(Entity.instanceId, out _);
-                        // Делегируем в целевой менеджер — он установит правильные manager/world
-                        added = await innerRedirect.AddNewEntityAsync(Entity, silent);
-                        return;
-                    }
-                    added = true;
-                    AddNewEntityReactionAsync(Entity, silent);
-                });
-            }
-            return added;
-        }
-
         public void AddNewEntityReaction(ECSEntity Entity, bool silent = false)
         {
             int graphId = AllocateGraphId(Entity.instanceId);
             AddNodeToAncestors(Entity, graphId);
 
-            ICollection<ECSComponent> result = Entity.entityComponents.isAsync 
-                ? Entity.entityComponents.GetComponentsAsync().Result 
-                : Entity.entityComponents.Components;
+            ICollection<ECSComponent> result = Entity.entityComponents.Components;
 
             foreach (var comp in result)
             {
@@ -318,27 +250,6 @@ namespace AECC.Core
                     Entity.entityComponents.RegisterAllComponents();
                     this.world.contractsManager.OnEntityCreated(Entity);
                 });
-            }
-        }
-
-        public async void AddNewEntityReactionAsync(ECSEntity Entity, bool silent = false)
-        {
-            int graphId = AllocateGraphId(Entity.instanceId);
-            AddNodeToAncestors(Entity, graphId);
-
-            ICollection<ECSComponent> result = Entity.entityComponents.isAsync 
-                ? await Entity.entityComponents.GetComponentsAsync()
-                : Entity.entityComponents.Components;
-
-            foreach (var comp in result)
-            {
-                graphSearchEngine.AddMetricToNode(graphId, $"Comp:{comp.GetId()}");
-            }
-
-            if(!silent)
-            {
-                await Entity.entityComponents.RegisterAllComponentsAsync();
-                this.world.contractsManager.OnEntityCreated(Entity);
             }
         }
 
@@ -385,39 +296,6 @@ namespace AECC.Core
             TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityDestroyed(Entity); });
         }
 
-        public async void RemoveEntityAsync(ECSEntity Entity)
-        {
-            // Проверка: Редирект для новых вызовов
-            var redirect = ResolveRedirect();
-            if (redirect != null)
-            {
-                redirect.RemoveEntityAsync(Entity);
-                return;
-            }
-
-            var entityRef = Entity;
-
-            var resultRemoving = await EntityStorageAsync.ExecuteOnRemoveLockedAsync(Entity.instanceId, async (longv, entt) => {});
-            
-            // Rescue для проснувшихся потоков
-            redirect = ResolveRedirect();
-            if (redirect != null)
-            {
-                redirect.RemoveEntityAsync(entityRef);
-                return;
-            }
-
-            if(resultRemoving.Value == null || !resultRemoving.Success)
-            {
-                return;
-            }
-
-            InternalGraphRemoval(Entity);
-            
-            Entity.OnDelete();
-            TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityDestroyed(Entity); });
-        }
-
         private void InternalGraphRemoval(ECSEntity Entity)
         {
             if (_entityToGraphId.TryGetValue(Entity.instanceId, out int deletedGraphId))
@@ -426,9 +304,7 @@ namespace AECC.Core
                 RemoveNodeFromAncestors(Entity, deletedGraphId);
 
                 // 2. Очищаем индекс от метрик компонентов этой сущности, перед тем как освободить её ID
-                ICollection<ECSComponent> components = Entity.entityComponents.isAsync 
-                    ? Entity.entityComponents.GetComponentsAsync().Result 
-                    : Entity.entityComponents.Components;
+                ICollection<ECSComponent> components = Entity.entityComponents.Components;
 
                 foreach (var comp in components)
                 {

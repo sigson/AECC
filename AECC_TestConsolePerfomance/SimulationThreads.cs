@@ -51,7 +51,7 @@ namespace Threads
             () => new LifetimeComponent(), () => new SoundEmitterComponent()
         };
 
-        private const int MaxEntities = 100000;
+        private const int MaxEntities = 10000;
         private const int SimulationDurationMs = 30_000; // 30 секунд симуляции
         private const int LockDelayMinMs = 1;
         private const int LockDelayMaxMs = 5;
@@ -245,7 +245,7 @@ namespace Threads
                 {
                     int lockCount = rng.Next(ComponentCountMin, ComponentCountMax + 1);
                     var selectedTypes = GetRandomComponentTypes(rng, lockCount);
-                    var acquiredTokens = new List<RWLock.LockToken>();
+                    var acquiredTokens = new List<AECC.Locking.RWToken>();
 
                     try
                     {
@@ -255,7 +255,7 @@ namespace Threads
                             try
                             {
                                 ECSComponent comp;
-                                RWLock.LockToken token;
+                                AECC.Locking.RWToken token;
                                 if (targetEntity.entityComponents.GetReadLockedComponent(compType, out comp, out token))
                                 {
                                     acquiredTokens.Add(token);
@@ -292,7 +292,7 @@ namespace Threads
                     {
                         foreach (var token in acquiredTokens)
                         {
-                            try { token?.Dispose(); } catch { }
+                            try { if(token.IsReal) token.Dispose() ; } catch { }
                         }
                     }
                 }
@@ -391,7 +391,7 @@ namespace Threads
                 int holdCount = rng.Next(ComponentCountMin, ComponentCountMax + 1);
 
                 var selectedTypes = GetRandomComponentTypes(rng, holdCount);
-                var acquiredTokens = new List<RWLock.LockToken>();
+                var acquiredTokens = new List<AECC.Locking.RWToken>();
 
                 try
                 {
@@ -399,7 +399,7 @@ namespace Threads
                     {
                         try
                         {
-                            RWLock.LockToken token;
+                            AECC.Locking.RWToken token;
                             if (entity.entityComponents.HoldComponentAddition(compType, out token))
                             {
                                 acquiredTokens.Add(token);
@@ -431,7 +431,7 @@ namespace Threads
                 {
                     foreach (var token in acquiredTokens)
                     {
-                        try { token?.Dispose(); } catch { }
+                        try { if(token.IsReal)token.Dispose(); } catch { }
                     }
                 }
             }

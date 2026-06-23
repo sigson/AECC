@@ -10,6 +10,7 @@ namespace AECC.Core.BuiltInTypes.Types.AtomicType
     [TypeUid(106)]
     public class DeterministicContainer : BaseCustomType
     {
+        static public new long Id { get; set; } = 106;
         public long _salt = 0;
 
         public DeterministicContainer()

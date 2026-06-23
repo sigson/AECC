@@ -31,45 +31,15 @@ namespace AECC.Core
         [System.NonSerialized]
         [IgnoreDataMember]
         public ComponentsDBComponent ownerDB;
-        [System.NonSerialized]
-        [IgnoreDataMember]
-        private ReaderWriterLockSlim lockerValue = null;
-        [IgnoreDataMember]
-        public ReaderWriterLockSlim locker
-        {
-            get
-            {
-                if (lockerValue == null)
-                    lockerValue = new ReaderWriterLockSlim();
-                return lockerValue;
-            }
-            set
-            {
-                lockerValue = value;
-            }
-        }
-        [System.NonSerialized]
-        [IgnoreDataMember]
-        private SharedLock monoLockerValue = null;
-        [IgnoreDataMember]
-        public SharedLock monoLocker
-        {
-            get
-            {
-                if (monoLockerValue == null)
-                    monoLockerValue = new SharedLock();
-                return monoLockerValue;
-            }
-            set
-            {
-                monoLockerValue = value;
-            }
-        }
 
-        public Dictionary<long, ECSComponentGroup> ComponentGroups = new Dictionary<long, ECSComponentGroup>();//todo: concurrent replace to normal
+        // PHASE 3c: lazy per-component collections. These were eagerly allocated for EVERY
+        // component (~12M Dictionaries + ~12M Lists at 1M x 12). The fields stay fields (the
+        // serialization member set is UNCHANGED — a null field round-trips as null), they just
+        // start null and are allocated only on first real use. All access sites are null-guarded.
+        public Dictionary<long, ECSComponentGroup> ComponentGroups = null;//todo: concurrent replace to normal
         [System.NonSerialized]
         [IgnoreDataMember]
-        public List<Action<ECSEntity, ECSComponent>> OnChangeHandlers = new List<Action<ECSEntity, ECSComponent>>();
+        public List<Action<ECSEntity, ECSComponent>> OnChangeHandlers = null;
         [System.NonSerialized]
         [IgnoreDataMember]
         public bool Unregistered = true;
@@ -171,6 +141,7 @@ namespace AECC.Core
 
         public ECSComponent SetGlobalComponentGroup()
         {
+            if (this.ComponentGroups == null) this.ComponentGroups = new Dictionary<long, ECSComponentGroup>();
             this.ComponentGroups.SetI(ECSComponentManager.GlobalProgramComponentGroup.GetId(), ECSComponentManager.GlobalProgramComponentGroup, this.SerialLocker);
 
             return this; 
@@ -178,6 +149,7 @@ namespace AECC.Core
 
         public ECSComponent AddComponentGroup(ECSComponentGroup componentGroup)
         {
+            if (this.ComponentGroups == null) this.ComponentGroups = new Dictionary<long, ECSComponentGroup>();
             this.ComponentGroups.SetI(componentGroup.GetId(), componentGroup, this.SerialLocker);
             return this;
         }
@@ -363,8 +335,8 @@ namespace AECC.Core
 
         public void OnRemove()
         {
-            ComponentGroups.ClearI(this.SerialLocker);
-            OnChangeHandlers.Clear();
+            if (ComponentGroups != null) ComponentGroups.ClearI(this.SerialLocker);
+            if (OnChangeHandlers != null) OnChangeHandlers.Clear();
             ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
 
             // Сброс состояния для переиспользования компонента

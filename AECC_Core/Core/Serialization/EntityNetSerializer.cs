@@ -58,9 +58,7 @@ namespace AECC.Core.Serialization
                         NLogger.Log($"Will removed last serialization data in {entity.AliasName}:{entity.instanceId} as\n {preparedData}");
                     }
                 }
-                GDAP.JsonAvailableComponents = "";
                 GDAP.BinAvailableComponents.Clear();
-                GDAP.JsonRestrictedComponents = "";
                 GDAP.BinRestrictedComponents.Clear();
                 GDAP.IncludeRemovedAvailable = false;
                 GDAP.IncludeRemovedRestricted = false;
@@ -99,26 +97,26 @@ namespace AECC.Core.Serialization
 
         public override byte[] BuildSerializedEntityWithGDAP(ECSEntity toEntity, ECSEntity fromEntity, bool ignoreNullData = false)
         {
-            var data = GroupDataAccessPolicy.ComponentsFilter(toEntity, fromEntity);
+            bool includeRemoved;
+            var data = GroupDataAccessPolicy.ComponentsFilter(toEntity, fromEntity, out includeRemoved);
             if (Defines.LogECSEntitySerializationComponents)
             {
                 var preparedData = "";
-                data.Item2.ForEach(x => preparedData += EntitySerializer.TypeStorage[x.Key].ToString() + "\n");
+                data.ForEach(x => preparedData += EntitySerializer.TypeStorage[x.Key].ToString() + "\n");
                 if (preparedData != "")
                 {
                     NLogger.Log($"GDAP filtering result from base {toEntity.AliasName}:{toEntity.instanceId} to {fromEntity.AliasName}:{fromEntity.instanceId} as\n {preparedData}");
                 }
             }
             var resultObject = new SerializedEntity();
-            if (data.Item1 == "" && data.Item2.Count() == 0 && !ignoreNullData)
+            if (!includeRemoved && data.Count == 0 && !ignoreNullData)
             {
                 return new byte[0];
             }
             resultObject.Entity = fromEntity.binSerializedEntity;
-            if (!(data.Item1 == "#INCLUDEREMOVED#" || ignoreNullData))
+            if (!(includeRemoved || ignoreNullData))
             {
-                data.Item1 = "";
-                resultObject.Components = data.Item2;
+                resultObject.Components = data;
             }
 
             return serializationAdapter.SerializeAdapterEntity(resultObject);

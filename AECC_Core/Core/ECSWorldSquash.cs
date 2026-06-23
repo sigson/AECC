@@ -97,45 +97,14 @@ namespace AECC.Core
                     entitiesToRegister.Add((entity, false));
                 }
 
-                // --- Async EntityStorageAsync ---
-                var asyncKeys = sourceWorld.entityManager.EntityStorageAsync.GetKeysAsync().Result;
-                if (asyncKeys != null && asyncKeys.Count > 0)
-                {
-                    foreach (var entityId in asyncKeys.ToList())
-                    {
-                        var asyncResult = sourceWorld.entityManager.EntityStorageAsync.TryGetValueAsync(entityId).Result;
-                        if (!asyncResult.Success || asyncResult.Value == null)
-                            continue;
-
-                        var entity = asyncResult.Value;
-
-                        sourceWorld.entityManager.EntityStorageAsync.UnsafeRemove(entityId, out _);
-
-                        entity.ECSWorldOwner = targetWorld;
-                        entity.manager = targetWorld.entityManager;
-                        SquashUpdateComponentWorldReferences(entity, targetWorld);
-
-                        if (!targetWorld.entityManager.EntityStorageAsync.UnsafeAdd(entityId, entity))
-                        {
-                            NLogger.Error($"SquashWorlds[OneThread]: не удалось добавить async-сущность {entityId} ({entity.AliasName}) в целевой мир {targetWorld.instanceId}");
-                            continue;
-                        }
-
-                        entitiesToRegister.Add((entity, true));
-                    }
-                }
-
                 // Редирект даже в однопоточном режиме
                 sourceWorld.entityManager.ActivateSquashRedirect(targetWorld.entityManager);
             }
 
-            // Фаза регистрации: sync через AddNewEntityReaction, async через AddNewEntityReactionAsync
+            // Фаза регистрации (только sync — async-ветка удалена)
             foreach (var (entity, wasAsync) in entitiesToRegister)
             {
-                if (wasAsync)
-                    targetWorld.entityManager.AddNewEntityReactionAsync(entity);
-                else
-                    targetWorld.entityManager.AddNewEntityReaction(entity);
+                targetWorld.entityManager.AddNewEntityReaction(entity);
             }
         }
 
@@ -168,14 +137,11 @@ namespace AECC.Core
 
                 // 1.1. Target sync
                 allLockTokens.Add(targetWorld.entityManager.EntityStorage.LockStorage());
-                // 1.2. Target async
-                allLockTokens.Add(targetWorld.entityManager.EntityStorageAsync.LockStorageAsync().AsTask().Result);
 
-                // 1.3. Source sync + async (по порядку instanceId)
+                // 1.2. Source sync (по порядку instanceId)
                 foreach (var sourceWorld in sourceWorlds)
                 {
                     allLockTokens.Add(sourceWorld.entityManager.EntityStorage.LockStorage());
-                    allLockTokens.Add(sourceWorld.entityManager.EntityStorageAsync.LockStorageAsync().AsTask().Result);
                 }
 
                 // === ФАЗА 2: Сбор сущностей + блокировка компонентных хранилищ ===
@@ -195,25 +161,6 @@ namespace AECC.Core
                         LockEntityComponentStorages(entity, allLockTokens);
                         collectedEntities.Add((entity, sourceWorld, false));
                     }
-
-                    // --- Async сущности ---
-                    var asyncKeys = sourceWorld.entityManager.EntityStorageAsync.GetKeysAsync().Result;
-                    if (asyncKeys != null && asyncKeys.Count > 0)
-                    {
-                        var asyncKeysSorted = asyncKeys.ToList();
-                        asyncKeysSorted.Sort();
-                        foreach (var entityId in asyncKeysSorted)
-                        {
-                            var asyncResult = sourceWorld.entityManager.EntityStorageAsync.TryGetValueAsync(entityId).Result;
-                            if (!asyncResult.Success || asyncResult.Value == null)
-                                continue;
-
-                            var entity = asyncResult.Value;
-
-                            LockEntityComponentStorages(entity, allLockTokens);
-                            collectedEntities.Add((entity, sourceWorld, true));
-                        }
-                    }
                 }
 
                 // === ФАЗА 3: Атомарный перенос ===
@@ -221,26 +168,19 @@ namespace AECC.Core
                 foreach (var (entity, sourceWorld, wasAsync) in collectedEntities)
                 {
                     // 3.1. Удаляем из исходного хранилища
-                    if (wasAsync)
-                        sourceWorld.entityManager.EntityStorageAsync.UnsafeRemove(entity.instanceId, out _);
-                    else
-                        sourceWorld.entityManager.EntityStorage.UnsafeRemove(entity.instanceId, out _);
+                    sourceWorld.entityManager.EntityStorage.UnsafeRemove(entity.instanceId, out _);
 
                     // 3.2. Обновляем мировые ссылки
                     entity.ECSWorldOwner = targetWorld;
                     entity.manager = targetWorld.entityManager;
                     SquashUpdateComponentWorldReferences(entity, targetWorld);
 
-                    // 3.3. Вносим в целевое хранилище (того же типа: sync → sync, async → async)
-                    bool added;
-                    if (wasAsync)
-                        added = targetWorld.entityManager.EntityStorageAsync.UnsafeAdd(entity.instanceId, entity);
-                    else
-                        added = targetWorld.entityManager.EntityStorage.UnsafeAdd(entity.instanceId, entity);
+                    // 3.3. Вносим в целевое хранилище
+                    bool added = targetWorld.entityManager.EntityStorage.UnsafeAdd(entity.instanceId, entity);
 
                     if (!added)
                     {
-                        NLogger.Error($"SquashWorlds: не удалось добавить {(wasAsync ? "async" : "sync")}-сущность {entity.instanceId} ({entity.AliasName}) в целевой мир {targetWorld.instanceId}");
+                        NLogger.Error($"SquashWorlds: не удалось добавить sync-сущность {entity.instanceId} ({entity.AliasName}) в целевой мир {targetWorld.instanceId}");
                         continue;
                     }
 
@@ -280,10 +220,7 @@ namespace AECC.Core
             // === ФАЗА 5: Регистрация в граф-поисковике и контрактном кэше ===
             foreach (var (entity, wasAsync) in entitiesToRegister)
             {
-                if (wasAsync)
-                    targetWorld.entityManager.AddNewEntityReactionAsync(entity);
-                else
-                    targetWorld.entityManager.AddNewEntityReaction(entity);
+                targetWorld.entityManager.AddNewEntityReaction(entity);
             }
         }
 
@@ -306,25 +243,10 @@ namespace AECC.Core
             {
                 NLogger.Error($"SquashWorlds: не удалось захватить sync component storage для сущности {entity.instanceId}: {ex.Message}");
             }
-
-            // Async component storage (захватываем только если там есть компоненты)
-            if (entity.entityComponents.isAsync)
-            {
-                try
-                {
-                    var asyncLock = entity.entityComponents.GetWriteLockedComponentStorageAsync().AsTask().Result;
-                    lockTokens.Add(asyncLock);
-                }
-                catch (Exception ex)
-                {
-                    NLogger.Error($"SquashWorlds: не удалось захватить async component storage для сущности {entity.instanceId}: {ex.Message}");
-                }
-            }
         }
 
         /// <summary>
         /// Обновляет ECSWorldOwner у всех компонентов сущности на целевой мир.
-        /// Обходит оба хранилища компонентов — sync и async.
         /// </summary>
         private static void SquashUpdateComponentWorldReferences(ECSEntity entity, ECSWorld targetWorld)
         {
@@ -345,28 +267,6 @@ namespace AECC.Core
             catch (Exception ex)
             {
                 NLogger.Error($"SquashWorlds: ошибка при обновлении sync-компонентов сущности {entity.instanceId}: {ex.Message}");
-            }
-
-            // Async компоненты (если есть)
-            if (entity.entityComponents.isAsync)
-            {
-                try
-                {
-                    var asyncComponents = entity.entityComponents.GetComponentsAsync().Result;
-                    if (asyncComponents != null)
-                    {
-                        foreach (var component in asyncComponents)
-                        {
-                            if (component == null) continue;
-                            component.ECSWorldOwnerId = targetWorld.instanceId;
-                            component.ECSWorldOwnerCache = targetWorld;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    NLogger.Error($"SquashWorlds: ошибка при обновлении async-компонентов сущности {entity.instanceId}: {ex.Message}");
-                }
             }
         }
     }

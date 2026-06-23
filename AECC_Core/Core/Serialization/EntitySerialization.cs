@@ -37,17 +37,14 @@ namespace AECC.Core.Serialization
             {
                 var nonSerializedSet = new HashSet<Type>() { };
 
-                var ecsObjects = ECSAssemblyExtensions.GetAllSubclassOf(typeof(IECSObject)).Where(x => !x.IsAbstract).Where(x => !nonSerializedSet.Contains(x)).ToHashSet();
-                ecsObjects.Select(x => Activator.CreateInstance(x)).Cast<IECSObject>().ForEach(x =>
+                var ecsObjects = ECSAssemblyExtensions.GetAllSubclassOf(typeof(IDObject)).Where(x => !x.IsAbstract).Where(x => !nonSerializedSet.Contains(x)).ToHashSet();
+                ecsObjects.Select(x => Activator.CreateInstance(x)).Cast<IDObject>().ForEach(x =>
                 {
                     if (TypeStorage.ContainsKey(x.GetId()))
                         NLogger.Error("Error adding " + x.GetType().Name + " id " + x.GetId() + " is presened as " + TypeStorage[x.GetId()].Name);
                     TypeStorage[x.GetId()] = x.GetType();
                     TypeIdStorage[x.GetType()] = x.GetId();
                     TypeStringStorage[x.GetType().Name] = x.GetType();
-
-                    if (x is BaseCustomType)
-                        return;
 
                     try
                     {

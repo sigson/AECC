@@ -86,6 +86,28 @@ namespace AECC.Extensions.ThreadingSync
         }
 
         /// <summary>
+        /// Zero-alloc вход в блокировку: readonly struct, потребляется ТОЛЬКО через using
+        /// по месту (без боксинга в IDisposable, без хранения в поле, без возврата наружу).
+        /// В OneThreadMode реального захвата нет. Monitor реентрантен — вложенные Lock корректны.
+        /// </summary>
+        public Scope LockScoped() => new Scope(LockObject);
+
+        public readonly struct Scope : IDisposable
+        {
+            private readonly object _gate;
+            private readonly bool _taken;
+            public Scope(object gate)
+            {
+                _gate = gate;
+                if (Defines.OneThreadMode) { _taken = false; return; }
+                bool taken = false;
+                Monitor.Enter(gate, ref taken);
+                _taken = taken;
+            }
+            public void Dispose() { if (_taken) Monitor.Exit(_gate); }
+        }
+
+        /// <summary>
         /// Выполняет действие внутри блокировки (синтаксический сахар).
         /// </summary>
         public void ExecuteLocked(Action action)

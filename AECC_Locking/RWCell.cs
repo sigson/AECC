@@ -73,63 +73,22 @@ namespace AECC.Locking
         public static bool ThrowOnOrderViolation = false;
 
         // ───────────────────────── thread-static accounting ─────────────────────────
-        // Parallel arrays scanned linearly. Holds only what THIS thread currently owns (units),
-        // so the scan is trivially short. No per-slot object, no tuple boxing.
-        [ThreadStatic] private static object[] _hcContainer;
-        [ThreadStatic] private static int[] _hcSlot;
-        [ThreadStatic] private static byte[] _hcMode;   // 0 read, 1 write
-        [ThreadStatic] private static int[] _hcDepth;
-        [ThreadStatic] private static int _hcCount;
-
-        private static void EnsureHeld()
+        // ONE struct array holding only what THIS thread currently owns. AoS (not parallel arrays):
+        // a single thread-static reference + a single contiguous scan. The previous SoA version did
+        // ~5 thread-static lookups per call plus two thread-static array loads per scan iteration;
+        // thread-static access is the dominant fixed cost of the uncontended fast path (and far more
+        // expensive under Mono/IL2CPP than CoreCLR). Each Enter/Exit now reads the array into a local
+        // ONCE and scans that local. Feature is UNCHANGED: same-mode reentry -> depth++ (dummy),
+        // cross-mode -> throw/dummy by flag, order-independent disposal via the depth counter.
+        private struct HeldEntry
         {
-            if (_hcContainer == null)
-            {
-                _hcContainer = new object[16];
-                _hcSlot = new int[16];
-                _hcMode = new byte[16];
-                _hcDepth = new int[16];
-                _hcCount = 0;
-            }
+            public object Container;
+            public int Slot;
+            public int Depth;
+            public byte Mode;       // 0 read, 1 write
         }
-
-        private static int FindHeld(object container, int slot)
-        {
-            int n = _hcCount;
-            for (int i = 0; i < n; i++)
-                if (_hcSlot[i] == slot && ReferenceEquals(_hcContainer[i], container))
-                    return i;
-            return -1;
-        }
-
-        private static void AddHeld(object container, int slot, byte mode)
-        {
-            if (_hcCount == _hcContainer.Length) GrowHeld();
-            int i = _hcCount++;
-            _hcContainer[i] = container;
-            _hcSlot[i] = slot;
-            _hcMode[i] = mode;
-            _hcDepth[i] = 1;
-        }
-
-        private static void RemoveHeld(int i)
-        {
-            int last = --_hcCount;
-            _hcContainer[i] = _hcContainer[last];
-            _hcSlot[i] = _hcSlot[last];
-            _hcMode[i] = _hcMode[last];
-            _hcDepth[i] = _hcDepth[last];
-            _hcContainer[last] = null; // drop reference
-        }
-
-        private static void GrowHeld()
-        {
-            int n = _hcContainer.Length * 2;
-            Array.Resize(ref _hcContainer, n);
-            Array.Resize(ref _hcSlot, n);
-            Array.Resize(ref _hcMode, n);
-            Array.Resize(ref _hcDepth, n);
-        }
+        [ThreadStatic] private static HeldEntry[] _held;
+        [ThreadStatic] private static int _heldCount;
 
         // ───────────────────────── public API ─────────────────────────
 
@@ -143,25 +102,37 @@ namespace AECC.Locking
         {
             if (Defines.OneThreadMode) return false; // single-thread: pure no-op
 
-            EnsureHeld();
-            int idx = FindHeld(container, slot);
-            if (idx >= 0)
+            HeldEntry[] arr = _held;          // one thread-static read
+            int n = _heldCount;               // one thread-static read
+            if (arr == null) { arr = _held = new HeldEntry[16]; n = 0; }
+
+            // reentry check — scan the LOCAL array backward (most recent / most likely reentry first)
+            for (int i = n - 1; i >= 0; i--)
             {
-                byte have = _hcMode[idx];
-                byte want = write ? (byte)1 : (byte)0;
-                if (have == want)
+                if (arr[i].Slot == slot && ReferenceEquals(arr[i].Container, container))
                 {
-                    _hcDepth[idx]++;     // same mode reentry -> dummy, do not touch state
-                    return true;         // still tracked: Dispose must decrement depth
+                    byte have = arr[i].Mode;
+                    byte want = write ? (byte)1 : (byte)0;
+                    if (have == want)
+                    {
+                        arr[i].Depth++;      // same-mode reentry -> dummy, do not touch state
+                        return true;         // still tracked: Dispose must decrement depth
+                    }
+                    if (ThrowOnOrderViolation)
+                        throw new LockRecursionException(want == 1 ? "write lock under read lock" : "read lock under write lock");
+                    return false;            // cross-mode -> dummy no-op (matches old "DEADLOCK ESCAPE")
                 }
-                if (ThrowOnOrderViolation)
-                    throw new LockRecursionException(want == 1 ? "write lock under read lock" : "read lock under write lock");
-                return false;            // cross-mode -> dummy no-op (matches old "DEADLOCK ESCAPE")
             }
 
             if (write) AcquireWrite(parkHash, ref state);
             else AcquireRead(parkHash, ref state);
-            AddHeld(container, slot, write ? (byte)1 : (byte)0);
+
+            if (n == arr.Length) { Array.Resize(ref arr, n << 1); _held = arr; } // grow + publish
+            arr[n].Container = container;
+            arr[n].Slot = slot;
+            arr[n].Mode = write ? (byte)1 : (byte)0;
+            arr[n].Depth = 1;
+            _heldCount = n + 1;              // one thread-static write
             return true;
         }
 
@@ -173,22 +144,38 @@ namespace AECC.Locking
         public static void Exit(object container, int slot, int parkHash, ref long state)
         {
             if (Defines.OneThreadMode) return;
-            if (_hcContainer == null) return;
-            int idx = FindHeld(container, slot);
-            if (idx < 0) return; // defensive: released on wrong thread / double release
-            if (--_hcDepth[idx] > 0) return;
+            HeldEntry[] arr = _held;          // one thread-static read
+            if (arr == null) return;
+            int n = _heldCount;               // one thread-static read
 
-            byte mode = _hcMode[idx];
-            RemoveHeld(idx);
-            if (mode == 1) ReleaseWrite(parkHash, ref state);
-            else ReleaseRead(parkHash, ref state);
+            for (int i = n - 1; i >= 0; i--)  // LIFO disposal -> typically the first probe
+            {
+                if (arr[i].Slot == slot && ReferenceEquals(arr[i].Container, container))
+                {
+                    if (--arr[i].Depth > 0) return;  // still nested -> no real release
+                    byte mode = arr[i].Mode;
+                    int last = n - 1;
+                    if (i != last) arr[i] = arr[last]; // swap-remove (order irrelevant)
+                    arr[last].Container = null;        // drop reference
+                    _heldCount = last;                 // one thread-static write
+                    if (mode == 1) ReleaseWrite(parkHash, ref state);
+                    else ReleaseRead(parkHash, ref state);
+                    return;
+                }
+            }
+            // not found: released on wrong thread / double release -> defensive no-op
         }
 
         /// <summary>True iff the current thread holds (read or write) the given slot.</summary>
         public static bool IsHeldByCurrentThread(object container, int slot)
         {
-            if (_hcContainer == null) return false;
-            return FindHeld(container, slot) >= 0;
+            HeldEntry[] arr = _held;
+            if (arr == null) return false;
+            int n = _heldCount;
+            for (int i = n - 1; i >= 0; i--)
+                if (arr[i].Slot == slot && ReferenceEquals(arr[i].Container, container))
+                    return true;
+            return false;
         }
 
         // ───────────────────────── core acquire/release ─────────────────────────

@@ -8,7 +8,8 @@ namespace AECC.Core
 {
     [System.Serializable]
     [TypeUid(16)]
-    public class BaseCustomType : IECSObject
+    public class BaseCustomType : IDObject
     {
+        static public new long Id { get; set; } = 16;
     }
 }

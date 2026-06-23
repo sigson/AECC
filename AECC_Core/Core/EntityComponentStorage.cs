@@ -12,6 +12,7 @@ using System.ComponentModel;
 using AECC.Core.Serialization;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
+using AECC.Locking;
 using AECC.Core.BuiltInTypes.Components;
 using System.Runtime.Serialization;
 
@@ -22,15 +23,22 @@ namespace AECC.Core
     {
         private ECSEntity entity;
         public int ChangedComponent => changedComponents.Count;
-        public bool isAsync => componentsAsync.GetCountAsync().Result > 0;
-        private ILockedDictionary<Type, ECSComponent> componentsValue;
-        private ILockedDictionary<Type, ECSComponent> components
+        public bool isAsync => false; // PHASE 3a: async component storage retired (was allocating componentsAsync per entity)
+
+        // PHASE 2: per-entity component storage on LockedDictionarySlim keyed by the stable type
+        // UID (long, == component.GetId() == type.TypeId()). The heavyweight per-component
+        // ReaderWriterLockSlim is gone (the cell carries an inline `long` lock). HoldKeys is ON:
+        // absence-holds (HoldComponentAddition / ExecuteOnNotHasComponent) are part of the contract
+        // machinery. Public API still takes Type; Kid() maps Type->id at the boundary (attribute-
+        // based, registry-independent), so int->Type reverse lookups are never introduced.
+        private LockedDictionarySlim<long, ECSComponent> componentsValue;
+        private LockedDictionarySlim<long, ECSComponent> components
         {
             get
             {
                 if (componentsValue == null)
                 {
-                    componentsValue = new LockedDictionary<Type, ECSComponent>(true);
+                    componentsValue = new LockedDictionarySlim<long, ECSComponent>(true);
                 }
                 return componentsValue;
             }
@@ -39,6 +47,11 @@ namespace AECC.Core
                 componentsValue = value;
             }
         }
+
+        // Type -> stable type UID. Reads [TypeUid] via the same mechanism as ECSComponent.GetId()
+        // (cached reflection), so it does NOT depend on the serializer's TypeStorage being populated.
+        private static long Kid(Type t) { return t.TypeId(); }
+
         private readonly IDictionary<Type, int> changedComponents = new DictionaryWrapper<Type, int>();
         public IDictionary<long, Type> IdToTypeComponentValue;
         public IDictionary<long, Type> IdToTypeComponent
@@ -56,14 +69,14 @@ namespace AECC.Core
                 IdToTypeComponentValue = value;
             }
         }
-        private ILockedDictionary<long, object> SerializationContainerValue;
-        public ILockedDictionary<long, object> SerializationContainer
+        private LockedDictionarySlim<long, object> SerializationContainerValue;
+        public LockedDictionarySlim<long, object> SerializationContainer
         {
             get
             {
                 if (SerializationContainerValue == null)
                 {
-                    SerializationContainerValue = new LockedDictionary<long, object>();
+                    SerializationContainerValue = new LockedDictionarySlim<long, object>();
                 }
                 return SerializationContainerValue;
             }
@@ -118,7 +131,7 @@ namespace AECC.Core
                         {
                             NLogger.Log($"Will serialized changed component {changedComponent} in {this.entity.AliasName}:{this.entity.instanceId}");
                         }
-                        components.ExecuteReadLocked(changedComponent, (key, component) =>
+                        components.ExecuteReadLocked(Kid(changedComponent), (key, component) =>
                         {
                             using (MemoryStream writer = new MemoryStream())
                             {
@@ -131,24 +144,17 @@ namespace AECC.Core
 
                                     DBComponent dBComponent = null;
 
-                                    SharedLock.LockToken dbLocktocken = null;
-
                                     if (component is DBComponent)
                                     {
                                         dBComponent = (component as DBComponent);
                                     }
                                     if (dBComponent != null)
                                     {
-                                        dbLocktocken = dBComponent.SerializeDB(serializeOnlyChanged, clearChanged);
+                                        dBComponent.SerializeDB(serializeOnlyChanged, clearChanged);
                                     }
 
                                     //NetSerializer.Serializer.Default.Serialize(writer, component);
                                     serializedData = serializationAdapter.SerializeECSComponent(component);
-
-                                    if (dbLocktocken != null)
-                                    {
-                                        dbLocktocken.Dispose();
-                                    }
 
                                     if (dBComponent != null)
                                     {
@@ -185,21 +191,14 @@ namespace AECC.Core
                                         NLogger.Log($"Will serialized component {pairComponent.GetType()} in {this.entity.AliasName}:{this.entity.instanceId}");
                                     }
 
-                                    SharedLock.LockToken dbLocktocken = null;
-
                                     if (pairComponent is DBComponent)
                                     {
                                         dbComp = (pairComponent as DBComponent);
-                                        dbLocktocken = dbComp.SerializeDB(serializeOnlyChanged, clearChanged);
+                                        dbComp.SerializeDB(serializeOnlyChanged, clearChanged);
                                     }
 
                                     //NetSerializer.Serializer.Default.Serialize(writer, pairComponent);
                                     var serializedData = serializationAdapter.SerializeECSComponent((pairComponent as ECSComponent));
-
-                                    if (dbLocktocken != null)
-                                    {
-                                        dbLocktocken.Dispose();
-                                    }
 
                                     slicedComponents[pairComponentKey] = serializedData;//writer.ToArray();
                                     if (dbComp != null)
@@ -225,7 +224,7 @@ namespace AECC.Core
             {
                 foreach (var changedComponent in changedComponents)
                 {
-                    var component = components[changedComponent.Key];
+                    var component = components[Kid(changedComponent.Key)];
                     if (Defines.LogECSEntitySerializationComponents)
                     {
                         NLogger.Log($"Will serialized component {component.GetType()} in {this.entity.AliasName}:{this.entity.instanceId}");
@@ -299,7 +298,7 @@ namespace AECC.Core
         public bool CheckChanged(Type typeComponent) => changedComponents.Keys.Contains(typeComponent);
         public void DirectiveChange(Type typeComponent)
         {
-            components.ExecuteReadLocked(typeComponent, (key, component) =>
+            components.ExecuteReadLocked(Kid(typeComponent), (key, component) =>
             {
                 changedComponents[typeComponent] = 1;
             });
@@ -311,7 +310,7 @@ namespace AECC.Core
         {
             bool added = false;
             bool changed = false;
-            components.ExecuteOnAddOrChangeLocked(comType, component, (key, newcomponent) => {
+            components.ExecuteOnAddOrChangeLocked(Kid(comType), component, (key, newcomponent) => {
                 AddComponentProcess(comType, newcomponent, restoringMode);
                     added = true;
             }, (key, newcomponent, oldcomponent) => {
@@ -329,7 +328,7 @@ namespace AECC.Core
             {
                 if (!silent)
                 {
-                    components.ExecuteReadLocked(comType, (key, addedcomponent) =>
+                    components.ExecuteReadLocked(Kid(comType), (key, addedcomponent) =>
                     {
                         if (component.ECSWorldOwner != null)
                         {
@@ -353,9 +352,9 @@ namespace AECC.Core
         public bool AddComponentImmediately(Type comType, ECSComponent component, bool restoringMode = false, bool silent = false)
         {
             bool added = false;
-            if (!this.components.Keys.Contains(comType))
+            if (!this.components.ContainsKey(Kid(comType)))
             {
-                components.ExecuteOnAddLocked(comType, component, (key, newcomponent) =>
+                components.ExecuteOnAddLocked(Kid(comType), component, (key, newcomponent) =>
                 {
                     AddComponentProcess(comType, newcomponent, restoringMode);
                     added = true;
@@ -365,7 +364,7 @@ namespace AECC.Core
             {
                 if (!silent)
                 {
-                    components.ExecuteReadLocked(comType, (key, addedcomponent) =>
+                    components.ExecuteReadLocked(Kid(comType), (key, addedcomponent) =>
                     {
                         if (component.ECSWorldOwner != null)
                         {
@@ -411,7 +410,7 @@ namespace AECC.Core
         public bool ChangeComponent(ECSComponent component, bool silent = false, ECSEntity restoringOwner = null)
         {
             bool changed = false;
-            components.ExecuteOnChangeLocked(component.GetTypeFast(), component, (key, chcomponent, oldcomponent) =>
+            components.ExecuteOnChangeLocked(component.GetId(), component, (key, chcomponent, oldcomponent) =>
                 {
                     changed = ChangeComponentProcess(chcomponent,oldcomponent, silent, restoringOwner);
                 }
@@ -445,7 +444,7 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                component = this.components[componentClass];
+                component = this.components[Kid(componentClass)];
             }
             catch (Exception ex)
             {
@@ -490,10 +489,8 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                if(IdToTypeMode)
-                    component = this.components[this.IdToTypeComponent[componentTypeId]];
-                else
-                    component = this.components[componentTypeId.IdToECSType()]; 
+                // typeId IS the dictionary key now (== component.GetId()); no registry reverse needed.
+                component = this.components[componentTypeId];
             }
             catch (Exception ex)
             {
@@ -506,7 +503,7 @@ namespace AECC.Core
         public bool MarkComponentChanged(ECSComponent component, bool serializationSilent = false, bool eventSilent = false)
         {
             bool changed = false;
-            components.ExecuteOnChangeLocked(component.GetType(), component, (key, chcomponent, oldcomponent) =>
+            components.ExecuteOnChangeLocked(component.GetId(), component, (key, chcomponent, oldcomponent) =>
                 {
                     Type componentClass = chcomponent.GetTypeFast();
                     if (!serializationSilent)
@@ -528,9 +525,31 @@ namespace AECC.Core
             ECSComponent component2 = null;
             bool removed = false;
 
-            components.ExecuteOnRemoveLocked(componentClass, out component2, (key, component) =>
+            components.ExecuteOnRemoveLocked(Kid(componentClass), out component2, (key, component) =>
             {
-                RemoveComponentProcess(componentClass, component);
+                RemoveComponentProcess(component.GetTypeFast(), component);
+                removed = true;
+            });
+            if (removed)
+            {
+                component2.RemovingReaction(this.entity);
+            }
+            else
+            {
+                NLogger.LogError("try to remove non present component");
+            }
+            return component2;
+        }
+
+        // Id-based removal: typeId IS the slot key; the Type for RemoveComponentProcess is taken
+        // from the live component instance (registry-independent reverse).
+        private ECSComponent RemoveComponentByIdImmediately(long typeId)
+        {
+            ECSComponent component2 = null;
+            bool removed = false;
+            components.ExecuteOnRemoveLocked(typeId, out component2, (key, component) =>
+            {
+                RemoveComponentProcess(component.GetTypeFast(), component);
                 removed = true;
             });
             if (removed)
@@ -569,7 +588,7 @@ namespace AECC.Core
             bool exception = false;
             foreach (var component in components)
             {
-                if (component.Value.ComponentGroups.TryGetValueI(componentGroup, out _, component.Value.SerialLocker))
+                if (component.Value.ComponentGroups != null && component.Value.ComponentGroups.TryGetValueI(componentGroup, out _, component.Value.SerialLocker))
                 {
                     toRemoveComponent.Add(component.Value);
                 }
@@ -578,7 +597,7 @@ namespace AECC.Core
                 {
                     this.ExecuteWriteLockedComponent(removedComponent.GetTypeFast(), (key, component) =>
                     {
-                        if (!this.components.Keys.Contains(removedComponent.GetTypeFast()))
+                        if (!this.components.ContainsKey(removedComponent.GetId()))
                         {
                             exception = true;
                             notRemovedComponent.Add(removedComponent);
@@ -586,7 +605,7 @@ namespace AECC.Core
                         else
                         {
                             this.changedComponents.Remove(removedComponent.GetTypeFast(), out _);
-                            this.components.Remove(removedComponent.GetTypeFast());
+                            this.components.Remove(removedComponent.GetId());
                             if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
                             {
                                 this.SerializationContainer.Remove(removedComponent.GetId(), out _);
@@ -633,6 +652,7 @@ namespace AECC.Core
                 {
                     foreach (var group in filteringOnlyGroups)
                     {
+                        if (component.Value.ComponentGroups == null) continue;
                         foreach (var componentGroup in component.Value.ComponentGroups.SnapshotI(component.Value.SerialLocker))
                         {
                             if (componentGroup.Key == group)
@@ -667,7 +687,7 @@ namespace AECC.Core
 
         public bool AddComponentUnsafe(Type componentType, ECSComponent component, bool restoringMode = false, bool silent = false)
         {
-            if (this.components.UnsafeAdd(componentType, component))
+            if (this.components.UnsafeAdd(Kid(componentType), component))
             {
                 AddComponentProcess(componentType, component, restoringMode);
                 if (!silent)
@@ -682,7 +702,7 @@ namespace AECC.Core
         public bool ChangeComponentUnsafe(ECSComponent component, bool silent = false, ECSEntity restoringOwner = null)
         {
             var oldcomponent = GetComponentUnsafe(component.GetTypeFast());
-            if (this.components.UnsafeChange(component.GetTypeFast(), component))
+            if (this.components.UnsafeChange(component.GetId(), component))
             {
                 ChangeComponentProcess(component, oldcomponent, silent, restoringOwner);
                 if (!silent)
@@ -696,7 +716,7 @@ namespace AECC.Core
 
         public bool RemoveComponentUnsafeSilent(Type componentType)
         {
-            if (this.components.UnsafeRemove(componentType, out var component))
+            if (this.components.UnsafeRemove(Kid(componentType), out var component))
             {
                 RemoveComponentProcess(componentType, component);
                 return true;
@@ -707,16 +727,14 @@ namespace AECC.Core
         public ECSComponent GetComponentUnsafe(Type componentType)
         {
             ECSComponent component;
-            return (!this.components.TryGetValue(componentType, out component) ? null : component);
+            return (!this.components.TryGetValue(Kid(componentType), out component) ? null : component);
         }
 
         public ECSComponent GetComponentUnsafe(long componentTypeId)
         {
             ECSComponent component;
-            if(IdToTypeMode)
-                return !this.components.TryGetValue(this.IdToTypeComponent[componentTypeId], out component) ? null : component;
-            else
-                return !this.components.TryGetValue(componentTypeId.IdToECSType(), out component) ? null : component;
+            // typeId IS the slot key (== component.GetId()); same in both modes.
+            return !this.components.TryGetValue(componentTypeId, out component) ? null : component;
         }
         #endregion
 
@@ -741,7 +759,7 @@ namespace AECC.Core
 
         public ECSComponent RemoveComponentImmediately(long componentTypeId)
         {
-            return RemoveComponentImmediately(componentTypeId.IdToECSType());//this.IdToTypeComponent[componentTypeId]);
+            return RemoveComponentByIdImmediately(componentTypeId);
         }
 
         public void AddComponentsImmediately(IList<ECSComponent> addedComponents)
@@ -804,7 +822,7 @@ namespace AECC.Core
         }
 
         public bool HasComponent(Type componentClass) =>
-            this.components.ContainsKey(componentClass);
+            this.components.ContainsKey(Kid(componentClass));
 
         public bool HasComponent(long componentClassId)
         {
@@ -814,7 +832,7 @@ namespace AECC.Core
             }
             else
             {
-                return this.components.ContainsKey(componentClassId.IdToECSType());
+                return this.components.ContainsKey(componentClassId);
             }
         }
             
@@ -822,7 +840,7 @@ namespace AECC.Core
         public void OnEntityDelete()
         {
             this.components.EnterLockdown();
-            List<Type> snapshot;
+            List<long> snapshot;
             try
             {
                 snapshot = this.components.Keys.ToList();
@@ -830,7 +848,7 @@ namespace AECC.Core
             catch (Exception ex)
             {
                 NLogger.LogError(ex);
-                snapshot = new List<Type>();
+                snapshot = new List<long>();
             }
 
             foreach (var componentType in snapshot)
@@ -869,29 +887,31 @@ namespace AECC.Core
         public bool ExecuteOnNotHasComponent(Type componentType, Action action)
         {
             ECSComponent component;
-            if (this.components.ExecuteOnKeyHolded(componentType, action))
+            if (this.components.ExecuteOnKeyHolded(Kid(componentType), action))
             {
                 return true;
             }
             return false;
         }
 
-        public bool HoldComponentAddition(Type componentType, out RWLock.LockToken token, bool holdMode = true)
+        public bool HoldComponentAddition(Type componentType, out RWToken token, bool holdMode = true)
         {
-            return this.components.HoldKey(componentType, out token, holdMode);
+            return this.components.HoldKey(Kid(componentType), out token, holdMode);
         }
 
         public void ExecuteReadLockedComponent(Type componentType, Action<Type, ECSComponent> action)
         {
-            components.ExecuteReadLocked(componentType, action);
+            // Public API keeps the Type-typed action; adapt to the long-keyed slot, supplying the
+            // original Type from the closure so callers never see the internal id.
+            components.ExecuteReadLocked(Kid(componentType), (key, component) => action(componentType, component));
         }
 
         public void ExecuteWriteLockedComponent(Type componentType, Action<Type, ECSComponent> action)
         {
-            components.ExecuteWriteLocked(componentType, action);
+            components.ExecuteWriteLocked(Kid(componentType), (key, component) => action(componentType, component));
         }
 
-        public bool GetReadLockedComponent<T>(out T component, out RWLock.LockToken token) where T : ECSComponent
+        public bool GetReadLockedComponent<T>(out T component, out RWToken token) where T : ECSComponent
         {
             ECSComponent tempComponent;
 
@@ -902,17 +922,17 @@ namespace AECC.Core
             return result && component != null;
         }
 
-        public bool GetReadLockedComponent(Type componentType, out ECSComponent component, out RWLock.LockToken token)
+        public bool GetReadLockedComponent(Type componentType, out ECSComponent component, out RWToken token)
         {
-            return components.TryGetLockedElement(componentType, out component, out token, false);
+            return components.TryGetLockedElement(Kid(componentType), out component, out token, false);
         }
 
-        public bool GetWriteLockedComponent(Type componentType, out ECSComponent component, out RWLock.LockToken token)
+        public bool GetWriteLockedComponent(Type componentType, out ECSComponent component, out RWToken token)
         {
-            return components.TryGetLockedElement(componentType, out component, out token, true);
+            return components.TryGetLockedElement(Kid(componentType), out component, out token, true);
         }
 
-        public RWLock.LockToken GetWriteLockedComponentStorage()
+        public RWToken GetWriteLockedComponentStorage()
         {
             return components.LockStorage();
         }
@@ -920,7 +940,7 @@ namespace AECC.Core
         #endregion
 
         public ICollection<Type> ComponentClasses =>
-            this.components.Keys;
+            this.components.Values.Select(c => c.GetTypeFast()).ToList();
 
         public ICollection<ECSComponent> Components =>
             this.components.Values;
