@@ -22,6 +22,10 @@ namespace AECC.Core
         public LockedDictionarySlim<long, ECSEntity> EntityStorage = new LockedDictionarySlim<long, ECSEntity>();
         public LockedDictionarySlim<string, ECSEntity> PreinitializedEntities = new LockedDictionarySlim<string, ECSEntity>();
 
+        // Событийная замена ретрай-таймеров десериализации: объекты, ждущие прихода
+        // ещё не пришедшей сущности, перепроверяются при AddNewEntityReaction вместо опроса.
+        public readonly PendingDeserializationRegistry PendingDeserialization = new PendingDeserializationRegistry();
+
         public GraphSearchEngine graphSearchEngine;
 
         // --- ИНФРАСТРУКТУРА СКВОШ-РЕДИРЕКТА ---
@@ -251,6 +255,11 @@ namespace AECC.Core
                     this.world.contractsManager.OnEntityCreated(Entity);
                 });
             }
+
+            // Приход сущности — событие для слива отложенной десериализации
+            // (событийная замена ретрай-таймеров). Асинхронно, чтобы не исполнять
+            // повторные попытки (берущие SerialLocker) внутри стека прихода.
+            TaskEx.RunAsync(() => this.PendingDeserialization.Drain());
         }
 
         // --- ЛОГИКА УДАЛЕНИЯ И ПЕРЕПОДЧИНЕНИЯ ---
@@ -368,6 +377,10 @@ namespace AECC.Core
                 graphSearchEngine.AddMetricToNode(graphId, $"Comp:{Component.GetId()}");
             }
             TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityComponentAddedReaction(Entity, Component); });
+
+            // Приход компонента — тоже событие для слива отложенной десериализации
+            // (на случай, когда владелец-ссылка — компонент, добавленный к уже существующей сущности).
+            TaskEx.RunAsync(() => this.PendingDeserialization.Drain());
         }
 
         public void OnRemoveComponent(ECSEntity Entity, ECSComponent Component)

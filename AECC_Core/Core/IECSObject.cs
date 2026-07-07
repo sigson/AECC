@@ -343,25 +343,24 @@ namespace AECC.Core
                         deserres = DeserializationProcess(true);
                     if (!deserres)
                     {
-                        var timer = new TimerCompat();
-                        timer.TimerCompatInit(100, (obj, arg) =>
-                        {
-                            timer.Stop();
-                            timer.Dispose();
-                            AfterDeserialization();
-                        }, false);
+                        var registry = this.ECSWorldOwner.entityManager.PendingDeserialization;
                         if (deserializeErrorCount < 30)
                         {
                             deserializeErrorCount++;
-                            timer.Start();
+                            // Событийная замена ретрай-таймера: повторить при приходе недостающей сущности.
+                            registry.Register(this, () => AfterDeserialization());
+                            // register-then-recheck: сущность могла прийти между проверкой и регистрацией.
+                            if (!DeserializationProcess(true))
+                                return;
                         }
                         else
                         {
                             NLogger.Error("client: error deserialize");
+                            return;
                         }
-
-                        return;
                     }
+                    deserializeErrorCount = 0;
+                    this.ECSWorldOwner.entityManager.PendingDeserialization.Unregister(this);
                     AfterDeserializationImpl();
                 }
             }

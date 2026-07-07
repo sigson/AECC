@@ -240,16 +240,7 @@ namespace AECC.Core
                 {
                     lock (state.Lock)
                     {
-                        List<Action<ECSEntity, ECSComponent>> callbackActions;
-                        ECSComponentManager.OnChangeCallbacksDB.TryGetValue(this.GetId(), out callbackActions);
                         this.OnChanged(entity);
-                        if (callbackActions != null)
-                        {
-                            foreach (var act in callbackActions)
-                            {
-                                act(entity, this);
-                            }
-                        }
                     }
                 });
             }

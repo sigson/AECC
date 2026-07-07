@@ -15,7 +15,7 @@ namespace AECC.Core
 {
     [System.Serializable]
     [TypeUid(6)]
-    public class ECSComponentGroup : ECSComponent
+    public class ECSComponentGroup : IDObject
     {
         public static new long Id { get; set; } = 6;
     }

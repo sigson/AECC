@@ -20,8 +20,6 @@ namespace AECC.Core
 {
     public class ECSComponentManager
     {
-        public static Dictionary<long, List<Action<ECSEntity, ECSComponent>>> OnChangeCallbacksDB = new Dictionary<long, List<Action<ECSEntity, ECSComponent>>>();
-
         public static ECSComponentGroup GlobalProgramComponentGroup;
 
         private ECSWorld world;

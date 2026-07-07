@@ -950,14 +950,21 @@ namespace AECC.Core.BuiltInTypes.Components
                         serializedDBNonEO.ForEach(x => serializedDB.Remove(x.Key));
                         serializedDBNonEO.Where(x => x.Value.Item2 > 10).ToList().ForEach(x => serializedDBNonEO.Remove(x.Key));
 
-                        var timer = new TimerCompat();
-                        timer.TimerCompatInit(200, (obj, arg) =>
+                        // Событийная замена ретрай-таймера: повторить при приходе недостающей
+                        // сущности-владельца. Cap (10) и dead-letter (RemoveComponentsByOwner)
+                        // остаются в блоке retryNullEntityOwner выше и срабатывают на сливах.
+                        var registry = this.ECSWorldOwner?.entityManager?.PendingDeserialization;
+                        if (registry != null)
                         {
-                            timer.Stop();
-                            timer.Dispose();
-                            UnserializeDB(true);
-                        }, false);
-                        timer.Start();
+                            registry.Register(this, () => UnserializeDB(true));
+                            // register-then-recheck: владелец мог прийти во время обработки до регистрации.
+                            if (serializedDBNonEO.Any(x => x.Key.ECSObject != null))
+                                TaskEx.RunAsync(() => UnserializeDB(true));
+                        }
+                    }
+                    else
+                    {
+                        this.ECSWorldOwner?.entityManager?.PendingDeserialization.Unregister(this);
                     }
                 }
 

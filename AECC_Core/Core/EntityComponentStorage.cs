@@ -581,6 +581,23 @@ namespace AECC.Core
 
 
 
+        /// <summary>
+        /// Принадлежит ли сущность группе (флаг-членство): есть ли хотя бы один компонент,
+        /// помеченный группой с данным Id. Группа — независимая IDObject-единица, не компонент.
+        /// </summary>
+        public bool HasComponentInGroup(long componentGroup)
+        {
+            foreach (var component in components)
+            {
+                if (component.Value.ComponentGroups != null
+                    && component.Value.ComponentGroups.TryGetValueI(componentGroup, out _, component.Value.SerialLocker))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public void RemoveComponentsWithGroup(long componentGroup)
         {
             List<ECSComponent> toRemoveComponent = new List<ECSComponent>();

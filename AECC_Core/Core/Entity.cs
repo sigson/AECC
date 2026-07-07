@@ -612,8 +612,11 @@ namespace AECC.Core
         public bool HasComponent(long componentClassId) =>
             this.entityComponents.HasComponent(componentClassId);
 
+        public bool IsInGroup<T>() where T : ECSComponentGroup =>
+            this.entityComponents.HasComponentInGroup(GId<T>());
+
         public bool IsSameGroup<T>(ECSEntity otherEntity) where T : ECSComponentGroup =>
-            (this.HasComponent<T>() && otherEntity.HasComponent<T>()) && this.GetComponent<T>().GetId().Equals(otherEntity.GetComponent<T>().GetId());
+            this.IsInGroup<T>() && otherEntity.IsInGroup<T>();
 
         public void OnDelete()
         {

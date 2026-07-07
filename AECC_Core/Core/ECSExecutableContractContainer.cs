@@ -430,16 +430,6 @@ namespace AECC.Core
             }
         }
 
-        /// <summary>
-        /// Need to setup in initalize method. Setting up look like is:
-        /// ComponentsOnChangeCallbacks.Add(GameComponent.Id, new List<Action<ECSEntity, ECSComponent>>() {
-        ///         (entity, component) => {
-        ///             (component as GameComponent);
-        ///         }
-        ///     });
-        /// </summary>
-        public IDictionary<long, List<Action<ECSEntity, ECSComponent>>> ComponentsOnChangeCallbacks = new DictionaryWrapper<long, List<Action<ECSEntity, ECSComponent>>>();//id of component and func
-
         public ECSExecutableContractContainer()
         {
             GenerationStackTrace = new System.Diagnostics.StackTrace();

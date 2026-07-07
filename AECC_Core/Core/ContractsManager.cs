@@ -67,19 +67,6 @@ namespace AECC.Core
                         NLogger.Error($"System {system.GetType().Name} has not initialized conditions.");
                 }
 
-                foreach (var CallbackData in system.ComponentsOnChangeCallbacks)
-                {
-                    List<Action<ECSEntity, ECSComponent>> callBack;
-                    if (ECSComponentManager.OnChangeCallbacksDB.TryGetValue(CallbackData.Key, out callBack))
-                    {
-                        ECSComponentManager.OnChangeCallbacksDB[CallbackData.Key] = callBack.Concat(CallbackData.Value).ToList();
-                    }
-                    else
-                    {
-                        ECSComponentManager.OnChangeCallbacksDB[CallbackData.Key] = CallbackData.Value;
-                    }
-                }
-                
             }
         }
 
