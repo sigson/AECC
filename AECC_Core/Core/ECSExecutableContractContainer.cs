@@ -43,66 +43,63 @@ namespace AECC.Core
     public class ECSExecutableContractContainer
     {
         public string ContractId { get; set; }
-        [System.NonSerialized]
-        protected Type _systemType = null;
+        // [NonSerialized] снят: бывшее поле _systemType уехало в Spec (шаг 3 фазы 6)
         public Type SystemType
         {
-            get => _systemType;
+            get => Spec._systemType;
             set
             {
                 lock (ContractLocker)
                 {
-                    _systemType = value;
+                    Spec._systemType = value;
                 }
             }
         }
 
-        protected StackTrace genTrace = null;
         public StackTrace GenerationStackTrace
         {
-            get => genTrace;
+            get => Spec.genTrace;
             set
             {
                 lock (ContractLocker)
                 {
-                    genTrace = value;
+                    Spec.genTrace = value;
                 }
             }
         }
 
-        protected ContractLoggingLevel _loggingLevel = ContractLoggingLevel.Verbose;
+        // ДЕФЕКТ 6.7 (ТЗ 4.8): verbose-простыни по умолчанию ВЫКЛЮЧЕНЫ — диагностика
+        // включается точечно (LoggingLevel = Verbose на контракте).
         /// <summary>
         /// Уровень логгирования для контракта
         /// </summary>
         public ContractLoggingLevel LoggingLevel
         {
-            get => _loggingLevel;
+            get => Spec._loggingLevel;
             set
             {
                 lock (ContractLocker)
                 {
-                    _loggingLevel = value;
+                    Spec._loggingLevel = value;
                 }
             }
         }
 
-        protected Dictionary<long, List<Func<ECSEntity, bool>>> _contractConditions = null;
         /// <summary>
         /// key long - entityid
         /// </summary>
         public Dictionary<long, List<Func<ECSEntity, bool>>> ContractConditions
         {
-            get => _contractConditions;
+            get => Spec._contractConditions;
             set
             {
                 lock (ContractLocker)
                 {
-                    _contractConditions = value;
+                    Spec._contractConditions = value;
                 }
             }
         }
 
-        protected Dictionary<long, Dictionary<long, bool>> _entityComponentPresenceSign = null;
         /// <summary>
         /// key long - entityownerid
         ///long - componentTypeId
@@ -110,17 +107,294 @@ namespace AECC.Core
         /// </summary>
         public Dictionary<long, Dictionary<long, bool>> EntityComponentPresenceSign
         {
-            get => _entityComponentPresenceSign;
+            get => Spec._entityComponentPresenceSign;
             set
             {
                 lock (ContractLocker)
                 {
-                    _entityComponentPresenceSign = value;
+                    Spec._entityComponentPresenceSign = value;
                 }
             }
         }
 
-        protected Action<ECSExecutableContractContainer, ECSEntity[]> _contractExecutable =
+        public Action<ECSExecutableContractContainer, ECSEntity[]> ContractExecutable
+        {
+            get => Spec._contractExecutable;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._contractExecutable = value;
+                }
+            }
+        }
+
+        public Action<ECSExecutableContractContainer, ECSEntity> ContractExecutableSingle
+        {
+            get => Spec._contractExecutableSingle;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._contractExecutableSingle = value;
+                }
+            }
+        }
+
+        public Action<ECSExecutableContractContainer, long[]> ErrorExecution
+        {
+            get => Spec._errorExecution;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._errorExecution = value;
+                }
+            }
+        }
+
+
+        public Func<ECSWorld, bool> WorldFilter
+        {
+            get => Spec._worldFilter;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._worldFilter = value;
+                }
+            }
+        }
+
+
+        public bool TimeDependExecution
+        {
+            get => Spec._timeDependExecution;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._timeDependExecution = value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Set FALSE if contract is time depend
+        /// </summary>
+        public bool NoPresenceSignAllowed
+        {
+            get => Spec._noPresenceSignAllowed;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._noPresenceSignAllowed = value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Set FALSE if contract is time depend
+        /// </summary>
+        public ECSWorld ECSWorldOwner
+        {
+            get => Runtime._ecsWorldOwner;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._ecsWorldOwner = value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Set FALSE if contract is time depend
+        /// </summary>
+        public bool RemoveAfterExecution
+        {
+            get => Spec._removeAfterExecution;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._removeAfterExecution = value;
+                }
+            }
+        }
+
+        public bool BypassFinalization
+        {
+            get => Spec._bypassFinalization;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._bypassFinalization = value;
+                }
+            }
+        }
+
+        public long MaxTries
+        {
+            get => Spec._maxTries;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._maxTries = value;
+                }
+            }
+        }
+
+        public long NowTried
+        {
+            get => Runtime._nowTried;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._nowTried = value;
+                }
+            }
+        }
+
+        public bool TimeDependActive
+        {
+            get => Runtime._timeDependActive;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._timeDependActive = value;
+                }
+            }
+        }
+
+        public bool PartialEntityFiltering
+        {
+            get => Spec._partialEntityFiltering;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._partialEntityFiltering = value;
+                }
+            }
+        }
+
+        public bool NotAllIncludedEntitiesPresenceSign
+        {
+            get => Spec._notAllIncludedEntitiesPresenceSign;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._notAllIncludedEntitiesPresenceSign = value;
+                }
+            }
+        }
+
+        public bool AsyncExecution
+        {
+            get => Spec._asyncExecution;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._asyncExecution = value;
+                }
+            }
+        }
+
+        public bool InWork
+        {
+            get => Runtime._inWork;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._inWork = value;
+                }
+            }
+        }
+
+        public bool InProgress
+        {
+            get => Runtime._inProgress;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._inProgress = value;
+                }
+            }
+        }
+
+        public long LastEndExecutionTimestamp
+        {
+            get => Runtime._lastEndExecutionTimestamp;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._lastEndExecutionTimestamp = value;
+                }
+            }
+        }
+
+        public long DelayRunMilliseconds
+        {
+            get => Spec._delayRunMilliseconds;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._delayRunMilliseconds = value;
+                }
+            }
+        }
+
+        public bool ContractExecuted
+        {
+            get => Runtime._contractExecuted;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Runtime._contractExecuted = value;
+                }
+            }
+        }
+
+        public bool ManualExitFromWorkingState
+        {
+            get => Spec._manualExitFromWorkingState;
+            set
+            {
+                lock (ContractLocker)
+                {
+                    Spec._manualExitFromWorkingState = value;
+                }
+            }
+        }
+
+        // ═══ ФАЗА 6, ШАГ 3 (ТЗ 4.8): разложение Spec/Runtime ═══
+        // ContractSpec — декларативная часть (ЧТО за контракт: условия, presence-sign,
+        // исполняемые тела, флаги режима). ContractRuntime — изменяемое состояние
+        // исполнения (счётчики/фазы) ЗА ОДНИМ ЛОКЕРОМ: ~27 lock-бойлерплейт-свойств
+        // контейнера схлопнуты в однострочные делегации; публичный API контейнера
+        // сохранён дословно (сетка и приклад не тронуты). Семантика прежняя: чтения
+        // без лока, записи под Runtime.Locker (бывший ContractLocker; его публичный
+        // сеттер — подменяемость локера — удалён как бомба, эскалация №11).
+
+        public sealed class ContractSpec
+        {
+            internal bool _asyncExecution = true;
+            internal bool _bypassFinalization = false;
+            internal Dictionary<long, List<Func<ECSEntity, bool>>> _contractConditions = null;
+            internal Action<ECSExecutableContractContainer, ECSEntity[]> _contractExecutable =
             (ECSExecutableContractContainer contract, ECSEntity[] entities) =>
             {
                 foreach (var entity in entities)
@@ -128,293 +402,43 @@ namespace AECC.Core
                     contract.ContractExecutableSingle(contract, entity);
                 }
             };
-        public Action<ECSExecutableContractContainer, ECSEntity[]> ContractExecutable
-        {
-            get => _contractExecutable;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _contractExecutable = value;
-                }
-            }
-        }
-
-        protected Action<ECSExecutableContractContainer, ECSEntity> _contractExecutableSingle =
+            internal Action<ECSExecutableContractContainer, ECSEntity> _contractExecutableSingle =
             (contract, entity) => { };
-        public Action<ECSExecutableContractContainer, ECSEntity> ContractExecutableSingle
-        {
-            get => _contractExecutableSingle;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _contractExecutableSingle = value;
-                }
-            }
-        }
-
-        protected Action<ECSExecutableContractContainer, long[]> _errorExecution =
+            internal long _delayRunMilliseconds = 0;
+            internal Dictionary<long, Dictionary<long, bool>> _entityComponentPresenceSign = null;
+            internal Action<ECSExecutableContractContainer, long[]> _errorExecution =
             (ECSExecutableContractContainer contract, long[] entities) => { };
-        public Action<ECSExecutableContractContainer, long[]> ErrorExecution
-        {
-            get => _errorExecution;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _errorExecution = value;
-                }
-            }
-        }
-
-
-        protected Func<ECSWorld, bool> _worldFilter =
+            internal ContractLoggingLevel _loggingLevel = ContractLoggingLevel.None;
+            internal bool _manualExitFromWorkingState = false;
+            internal long _maxTries = long.MaxValue;
+            internal bool _noPresenceSignAllowed = true;
+            internal bool _notAllIncludedEntitiesPresenceSign = false;
+            internal bool _partialEntityFiltering = false;
+            internal bool _removeAfterExecution = true;
+            internal Type _systemType = null;
+            internal bool _timeDependExecution = false;
+            internal Func<ECSWorld, bool> _worldFilter =
             (world) => { return true; };
-        public Func<ECSWorld, bool> WorldFilter
-        {
-            get => _worldFilter;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _worldFilter = value;
-                }
-            }
+            internal StackTrace genTrace = null;
         }
 
-
-        protected bool _timeDependExecution = false;
-        public bool TimeDependExecution
+        public sealed class ContractRuntime
         {
-            get => _timeDependExecution;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _timeDependExecution = value;
-                }
-            }
+            internal readonly object Locker = new object();
+            internal bool _contractExecuted = false;
+            internal ECSWorld _ecsWorldOwner = null;
+            internal bool _inProgress = false;
+            internal bool _inWork = false;
+            internal long _lastEndExecutionTimestamp = 0;
+            internal long _nowTried = 0;
+            internal bool _timeDependActive = true;
         }
 
-        protected bool _noPresenceSignAllowed = true;
-        /// <summary>
-        /// Set FALSE if contract is time depend
-        /// </summary>
-        public bool NoPresenceSignAllowed
-        {
-            get => _noPresenceSignAllowed;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _noPresenceSignAllowed = value;
-                }
-            }
-        }
+        public readonly ContractSpec Spec = new ContractSpec();
+        public readonly ContractRuntime Runtime = new ContractRuntime();
 
-        protected ECSWorld _ecsWorldOwner = null;
-        /// <summary>
-        /// Set FALSE if contract is time depend
-        /// </summary>
-        public ECSWorld ECSWorldOwner
-        {
-            get => _ecsWorldOwner;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _ecsWorldOwner = value;
-                }
-            }
-        }
-
-        protected bool _removeAfterExecution = true;
-        /// <summary>
-        /// Set FALSE if contract is time depend
-        /// </summary>
-        public bool RemoveAfterExecution
-        {
-            get => _removeAfterExecution;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _removeAfterExecution = value;
-                }
-            }
-        }
-
-        protected bool _bypassFinalization = false;
-        public bool BypassFinalization
-        {
-            get => _bypassFinalization;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _bypassFinalization = value;
-                }
-            }
-        }
-
-        protected long _maxTries = long.MaxValue;
-        public long MaxTries
-        {
-            get => _maxTries;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _maxTries = value;
-                }
-            }
-        }
-
-        protected long _nowTried = 0;
-        public long NowTried
-        {
-            get => _nowTried;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _nowTried = value;
-                }
-            }
-        }
-
-        protected bool _timeDependActive = true;
-        public bool TimeDependActive
-        {
-            get => _timeDependActive;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _timeDependActive = value;
-                }
-            }
-        }
-
-        protected bool _partialEntityFiltering = false;
-        public bool PartialEntityFiltering
-        {
-            get => _partialEntityFiltering;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _partialEntityFiltering = value;
-                }
-            }
-        }
-
-        protected bool _notAllIncludedEntitiesPresenceSign = false;
-        public bool NotAllIncludedEntitiesPresenceSign
-        {
-            get => _notAllIncludedEntitiesPresenceSign;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _notAllIncludedEntitiesPresenceSign = value;
-                }
-            }
-        }
-
-        protected bool _asyncExecution = true;
-        public bool AsyncExecution
-        {
-            get => _asyncExecution;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _asyncExecution = value;
-                }
-            }
-        }
-
-        protected bool _inWork = false;
-        public bool InWork
-        {
-            get => _inWork;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _inWork = value;
-                }
-            }
-        }
-
-        protected bool _inProgress = false;
-        public bool InProgress
-        {
-            get => _inProgress;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _inProgress = value;
-                }
-            }
-        }
-
-        protected long _lastEndExecutionTimestamp = 0;
-        public long LastEndExecutionTimestamp
-        {
-            get => _lastEndExecutionTimestamp;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _lastEndExecutionTimestamp = value;
-                }
-            }
-        }
-
-        protected long _delayRunMilliseconds = 0;
-        public long DelayRunMilliseconds
-        {
-            get => _delayRunMilliseconds;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _delayRunMilliseconds = value;
-                }
-            }
-        }
-
-        protected bool _contractExecuted = false;
-        public bool ContractExecuted
-        {
-            get => _contractExecuted;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _contractExecuted = value;
-                }
-            }
-        }
-
-        protected bool _manualExitFromWorkingState = false;
-        public bool ManualExitFromWorkingState
-        {
-            get => _manualExitFromWorkingState;
-            set
-            {
-                lock (ContractLocker)
-                {
-                    _manualExitFromWorkingState = value;
-                }
-            }
-        }
-
-        public object ContractLocker { get; set; } = new object();
+        /// <summary>Единый локер состояния (бывший публичный get/set-ContractLocker).</summary>
+        public object ContractLocker { get { return Runtime.Locker; } }
 
         public List<long> NeededEntities
         {
@@ -430,9 +454,14 @@ namespace AECC.Core
             }
         }
 
+        /// <summary>ДЕФЕКТ 6.7: захват стека рождения контракта — ДОРОГОЙ (StackTrace на
+        /// каждый контракт). Захватывается только при включённой диагностике; dead-letter
+        /// без флага печатает подсказку вместо стека.</summary>
+        public static bool CaptureGenerationStackTrace = false;
+
         public ECSExecutableContractContainer()
         {
-            GenerationStackTrace = new System.Diagnostics.StackTrace();
+            GenerationStackTrace = CaptureGenerationStackTrace ? new System.Diagnostics.StackTrace() : null;
             if(this.GetType() == typeof(ECSExecutableContractContainer))
             {
                 this.MaxTries = 1;
@@ -597,219 +626,81 @@ namespace AECC.Core
                 }
                 else
                 {
-                    NLogger.Log("You tried to execute contract that was already executed\n" + this.GenerationStackTrace.ToString() + "\n================================");
+                    NLogger.Log("You tried to execute contract that was already executed\n" + (this.GenerationStackTrace != null ? this.GenerationStackTrace.ToString() : "(стек не захвачен: 6.7)") + "\n================================");
                     return false;
                 }
             }
         }
 
+        // ═══ ФАЗА 6, «ЕДИНЫЙ LOCKER-ПУТЬ» (ТЗ 4.8) ═══
+        // Два дублированных метода (GetContractLockersOneThread / GetContractLockers)
+        // слиты в AcquireContractTargets: ядро проверок (presence-sign, условия,
+        // диагностика, дисциплина отката, строгий финал) — ОДНО; режимные точки помечены
+        // [T] (взятие токенов) и [D1]/[D2]/[D3] (исторические семантические расхождения
+        // ST/MT, воспроизведённые дословно за режимным флагом — канонизация одной
+        // семантики = эскалация №10). Прежние сигнатуры — тонкие шимы (сайты вызова
+        // не тронуты). Дрейф путей более невозможен: код один.
+
         private bool GetContractLockersOneThread(
-    List<long> contractEntities,
-    IDictionary<long, List<Func<ECSEntity, bool>>> localContractConditions,
-    IDictionary<long, Dictionary<long, bool>> localEntityComponentPresenceSign,
-    bool partialEntityTargetListLockingAllowed,
-    out List<IDisposable> lockTokens,
-    out List<ECSEntity> executionEntities)
+            List<long> contractEntities,
+            IDictionary<long, List<Func<ECSEntity, bool>>> localContractConditions,
+            IDictionary<long, Dictionary<long, bool>> localEntityComponentPresenceSign,
+            bool partialEntityTargetListLockingAllowed,
+            out List<IDisposable> lockTokens,
+            out List<ECSEntity> executionEntities)
         {
-            lockTokens = new List<IDisposable>();
-            executionEntities = new List<ECSEntity>();
+            return AcquireContractTargets(contractEntities, localContractConditions, localEntityComponentPresenceSign,
+                partialEntityTargetListLockingAllowed, takeTokens: false, out lockTokens, out executionEntities);
+        }
+
+        private bool GetContractLockers(
+            List<long> contractEntities,
+            IDictionary<long, List<Func<ECSEntity, bool>>> LocalContractConditions,
+            IDictionary<long, Dictionary<long, bool>> LocalEntityComponentPresenceSign,
+            bool partialEntityTargetListLockingAllowed,
+            out List<IDisposable> lockTokens,
+            out List<ECSEntity> executionEntities)
+        {
+            return AcquireContractTargets(contractEntities, LocalContractConditions, LocalEntityComponentPresenceSign,
+                partialEntityTargetListLockingAllowed, takeTokens: true, out lockTokens, out executionEntities);
+        }
+
+        private bool AcquireContractTargets(
+            List<long> contractEntities,
+            IDictionary<long, List<Func<ECSEntity, bool>>> localContractConditions,
+            IDictionary<long, Dictionary<long, bool>> localEntityComponentPresenceSign,
+            bool partialEntityTargetListLockingAllowed,
+            bool takeTokens,
+            out List<IDisposable> lockTokens,
+            out List<ECSEntity> executionEntities)
+        {
+            var collectedTokens = new List<IDisposable>();
+            var localExecutionEntities = new List<ECSEntity>();
             bool globalViolationSeizure = false;
 
-            foreach (var entityId in contractEntities)
+            // Дедуп — общий (фикс №20: MT дедуплицировал всегда, ST выровнен).
+            foreach (var entityId in new HashSet<long>(contractEntities))
             {
                 var entityWorld = ECSWorldOwner;
                 if (entityWorld == null || entityWorld.entityManager == null)
                 {
                     if (LoggingLevel == ContractLoggingLevel.Verbose)
-                    {
                         NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Entity {entityId} - world or entity manager not found");
-                    }
                     continue;
                 }
                 var entityManager = entityWorld.entityManager;
-                if (!entityManager.EntityStorage.TryGetValue(entityId, out var entity))
-                {
-                    if (LoggingLevel == ContractLoggingLevel.Verbose)
-                    {
-                        NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Entity {entityId} not found in EntityStorage");
-                    }
-                    continue;
-                }
 
-                bool violationSeizure = false;
                 var entityTokens = new List<IDisposable>();
-                bool yescomponent = false;
-                
-                // Check component requirements
-                if (localEntityComponentPresenceSign.TryGetValue(entityId, out var neededComponents))
-                {
-                    var expectedPresent = new List<Type>();
-                    var expectedAbsent = new List<Type>();
-                    var actualComponents = new List<Type>();
-                    var missingExpected = new List<Type>();
-                    var unexpectedPresent = new List<Type>();
+                bool keepEntity = false;
 
-                    // Собираем информацию о всех компонентах сущности
-                    if (LoggingLevel == ContractLoggingLevel.Verbose)
-                    {
-                        actualComponents = entity.entityComponents.ComponentClasses.ToList();
-                    }
-
-                    foreach (var component in neededComponents)
-                    {
-                        var componentType = component.Key.IdToECSType();
-                        bool hasComponent = entity.entityComponents.HasComponent(componentType);
-
-                        if (component.Value != hasComponent)
-                        {
-                            //expectedPresent.Add(componentType);
-
-                            //missingExpected.Add(componentType);
-                            violationSeizure = true;
-                            globalViolationSeizure = true;
-
-                            if (component.Value)
-                            {
-                                missingExpected.Add(componentType);
-                            }
-                            else
-                            {
-                                unexpectedPresent.Add(componentType);
-                            }
-                        }
-                        else
-                        {
-                            if (component.Value)
-                            {
-                                expectedPresent.Add(componentType);
-                            }
-                            else
-                            {
-                                expectedAbsent.Add(componentType);
-                            }
-                        }
-                        
-                        if (!violationSeizure)
-                        {
-                            yescomponent = true;
-                        }
-                    }
-
-                    if (violationSeizure && LoggingLevel == ContractLoggingLevel.Verbose)
-                    {
-                        var logMessage = new StringBuilder();
-                        logMessage.AppendLine($"Contract {this.GetType().Name} (ID: {this.ContractId}): Component requirements violation for Entity {entityId}:");
-                        
-                        if (missingExpected.Count > 0)
-                        {
-                            logMessage.AppendLine($"  Missing expected components: {string.Join(", ", missingExpected.Select(t => t.Name))}");
-                        }
-                        
-                        if (unexpectedPresent.Count > 0)
-                        {
-                            logMessage.AppendLine($"  Unexpected present components: {string.Join(", ", unexpectedPresent.Select(t => t.Name))}");
-                        }
-                        
-                        logMessage.AppendLine($"  Expected present: {string.Join(", ", expectedPresent.Select(t => t.Name))}");
-                        logMessage.AppendLine($"  Expected absent: {string.Join(", ", expectedAbsent.Select(t => t.Name))}");
-
-                        var rawRules = new StringBuilder();
-                        this.EntityComponentPresenceSign.ForEach(x => {
-                            rawRules.Append($"EntityId: {x.Key} = ");
-                            x.Value.ForEach(y =>
-                            {
-                                rawRules.Append($"{y.Key.IdToECSType().Name} = {y.Value}; ");
-                            });
-                            rawRules.AppendLine();
-                        });
-
-                        logMessage.AppendLine($"  Raw contract presence rules: {rawRules.ToString()}\n==!!==!!==!!==!!==!!==!!==!!==");
-
-                        logMessage.AppendLine($"  All entity components: {string.Join(", ", actualComponents.Select(t => t.Name))}");
-                        
-                        NLogger.Log(logMessage.ToString());
-                    }
-                }
-
-                // Check conditions
-                if (!violationSeizure && localContractConditions.TryGetValue(entityId, out var conditions))
-                {
-                    for (int i = 0; i < conditions.Count; i++)
-                    {
-                        bool condiresult = false;
-                        Exception condiex = null;
-                        try
-                        {
-                            condiresult = conditions[i](entity);
-                        }
-                        catch (Exception ex)
-                        {
-                            condiex = ex;
-                            condiresult = false;
-                        }
-                        if (!condiresult)
-                        {
-                            violationSeizure = true;
-                            globalViolationSeizure = true;
-
-                            if (LoggingLevel == ContractLoggingLevel.Verbose)
-                            {
-                                NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Condition #{i} failed for Entity {entityId} {(condiex != null ? "with exception: " + condiex.ToString() + "\n/*/*/*/*/*/*/*/*/*/*/*/*/*/\n" + new System.Diagnostics.StackTrace(condiex, true) : "")}");
-                            }
-                        }
-                    }
-                }
-
-                // Handle entity based on violation status
-                if (!violationSeizure || (partialEntityTargetListLockingAllowed &&
-                    _partialEntityFiltering && (yescomponent || (NoPresenceSignAllowed && !yescomponent))))
-                {
-                    executionEntities.Add(entity);
-                    lockTokens.AddRange(entityTokens);
-                }
-                else
-                {
-                    entityTokens.ForEach(token => token.Dispose());
-                }
-            }
-
-            if (globalViolationSeizure && !partialEntityTargetListLockingAllowed && !NotAllIncludedEntitiesPresenceSign)
-            {
-                lockTokens.ForEach(token => token.Dispose());
-                lockTokens.Clear();
-                executionEntities.Clear();
-                return false;
-            }
-
-            return executionEntities.Count > 0;
-        }
-
-        private bool GetContractLockers(List<long> contractEntities, IDictionary<long, List<Func<ECSEntity, bool>>> LocalContractConditions, IDictionary<long, Dictionary<long, bool>> LocalEntityComponentPresenceSign, bool partialEntityTargetListLockingAllowed, out List<IDisposable> lockTokens, out List<ECSEntity> executionEntities)
-        {
-            Dictionary<long, List<IDisposable>> Lockers = new Dictionary<long, List<IDisposable>>();
-            lockTokens = null;
-            executionEntities = null;
-            var localExecutionEntities = new List<ECSEntity>();
-            bool globalViolationSeizure = false;
-            
-            foreach (var entityid in new HashSet<long>(contractEntities))
-            {
-                var entityWorld = ECSWorldOwner;
-                if (entityWorld == null || entityWorld.entityManager == null)
-                {
-                    if (LoggingLevel == ContractLoggingLevel.Verbose)
-                    {
-                        NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Entity {entityid} - world or entity manager not found");
-                    }
-                    continue;
-                }
-
-                entityWorld.entityManager.EntityStorage.ExecuteReadLockedContinuously(entityid, (entid, contentity) =>
+                // ── пер-сущностное ядро (единое) ──
+                void CheckOne(long entid, ECSEntity contentity)
                 {
                     bool violationSeizure = false;
-                    Lockers.Add(entid, new List<IDisposable>());
-                    
-                    if (LocalEntityComponentPresenceSign.TryGetValue(entid, out var neededComponents))
+                    bool yescomponent = false; // ST-квирк partial-формулы, дословно
+                    Dictionary<long, bool> neededComponents = null;
+
+                    if (localEntityComponentPresenceSign.TryGetValue(entid, out neededComponents))
                     {
                         var expectedPresent = new List<Type>();
                         var expectedAbsent = new List<Type>();
@@ -817,70 +708,70 @@ namespace AECC.Core
                         var missingExpected = new List<Type>();
                         var unexpectedPresent = new List<Type>();
 
-                        // Собираем информацию о всех компонентах сущности для логгирования
                         if (LoggingLevel == ContractLoggingLevel.Verbose)
-                        {
                             actualComponents = contentity.entityComponents.ComponentClasses.ToList();
-                        }
 
                         foreach (var component in neededComponents)
                         {
                             var componentType = component.Key.IdToECSType();
 
-                            if (component.Value)
+                            if (takeTokens) // [T] транзакционные холды (present→read, absent→absence-hold с re-check'ом)
                             {
-                                
-                                if (contentity.entityComponents.GetReadLockedComponent(componentType, out var componentInstance, out var token))
+                                if (component.Value)
                                 {
-                                    expectedPresent.Add(componentType);
-                                    Lockers[entid].Add(token);
-                                    continue;
+                                    if (contentity.entityComponents.GetReadLockedComponent(componentType, out var componentInstance, out var token))
+                                    {
+                                        expectedPresent.Add(componentType);
+                                        entityTokens.Add(token);
+                                        continue;
+                                    }
+                                    missingExpected.Add(componentType);
                                 }
                                 else
                                 {
-                                    missingExpected.Add(componentType);
-                                    violationSeizure = true;
-                                    globalViolationSeizure = true;
-                                }
-                            }
-                            else
-                            {
-                                if (contentity.entityComponents.HoldComponentAddition(componentType, out var token))
-                                {
-                                    if (!contentity.entityComponents.HasComponent(componentType))
+                                    if (contentity.entityComponents.HoldComponentAddition(componentType, out var token))
                                     {
-                                        expectedAbsent.Add(componentType);
-                                        Lockers[entid].Add(token);
-                                        continue;
-                                    }
-                                    else
-                                    {
+                                        if (!contentity.entityComponents.HasComponent(componentType))
+                                        {
+                                            expectedAbsent.Add(componentType);
+                                            entityTokens.Add(token);
+                                            continue;
+                                        }
                                         token.Dispose();
                                         unexpectedPresent.Add(componentType);
-                                        violationSeizure = true;
-                                        globalViolationSeizure = true;
                                     }
                                 }
+                                violationSeizure = true;
+                                globalViolationSeizure = true;
                             }
-                            violationSeizure = true;
-                            globalViolationSeizure = true;
+                            else // [T] ST: сверка без холдов
+                            {
+                                bool hasComponent = contentity.entityComponents.HasComponent(componentType);
+                                if (component.Value != hasComponent)
+                                {
+                                    violationSeizure = true;
+                                    globalViolationSeizure = true;
+                                    if (component.Value) missingExpected.Add(componentType);
+                                    else unexpectedPresent.Add(componentType);
+                                }
+                                else
+                                {
+                                    if (component.Value) expectedPresent.Add(componentType);
+                                    else expectedAbsent.Add(componentType);
+                                }
+                                if (!violationSeizure)
+                                    yescomponent = true; // дословно ST: взводится, лишь пока нарушений не было
+                            }
                         }
 
                         if (violationSeizure && LoggingLevel == ContractLoggingLevel.Verbose)
                         {
                             var logMessage = new StringBuilder();
                             logMessage.AppendLine($"Contract {this.GetType().Name} (ID: {this.ContractId}): Component requirements violation for Entity {entid}:");
-                            
                             if (missingExpected.Count > 0)
-                            {
                                 logMessage.AppendLine($"  Missing expected components: {string.Join(", ", missingExpected.Select(t => t.Name))}");
-                            }
-                            
                             if (unexpectedPresent.Count > 0)
-                            {
                                 logMessage.AppendLine($"  Unexpected present components: {string.Join(", ", unexpectedPresent.Select(t => t.Name))}");
-                            }
-                            
                             logMessage.AppendLine($"  Expected present: {string.Join(", ", expectedPresent.Select(t => t.Name))}");
                             logMessage.AppendLine($"  Expected absent: {string.Join(", ", expectedAbsent.Select(t => t.Name))}");
 
@@ -893,16 +784,17 @@ namespace AECC.Core
                                 });
                                 rawRules.AppendLine();
                             });
-
                             logMessage.AppendLine($"  Raw contract presence rules: {rawRules.ToString()}\n==!!==!!==!!==!!==!!==!!==!!==");
-
                             logMessage.AppendLine($"  All entity components: {string.Join(", ", actualComponents.Select(t => t.Name))}");
-                            
                             NLogger.Log(logMessage.ToString());
                         }
                     }
 
-                    if (LocalContractConditions.TryGetValue(entid, out var conditions))
+                    // [D1] Историческое расхождение (дословно за флагом, эскалация №10):
+                    // MT проверял пользовательские условия ВСЕГДА (даже после presence-
+                    // нарушения — предикаты дёргались с их сайд-эффектами); ST — только
+                    // при чистом presence.
+                    if ((takeTokens || !violationSeizure) && localContractConditions.TryGetValue(entid, out var conditions))
                     {
                         for (int i = 0; i < conditions.Count; i++)
                         {
@@ -921,54 +813,89 @@ namespace AECC.Core
                             {
                                 violationSeizure = true;
                                 globalViolationSeizure = true;
-                                
                                 if (LoggingLevel == ContractLoggingLevel.Verbose)
-                                {
-                                    NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Condition #{i} failed for Entity {entid} {(condiex != null ? "with exception: " + condiex.ToString() + "\n/*/*/*/*/*/*/*/*/*/*/*/*/*/\n" + new System.Diagnostics.StackTrace(condiex, true): "")}");
-                                }
+                                    NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Condition #{i} failed for Entity {entid} {(condiex != null ? "with exception: " + condiex.ToString() + "\n/*/*/*/*/*/*/*/*/*/*/*/*/*/\n" + new System.Diagnostics.StackTrace(condiex, true) : "")}");
                             }
                         }
                     }
 
-                    if (violationSeizure)
+                    if (!violationSeizure)
                     {
-                        if (partialEntityTargetListLockingAllowed && this._partialEntityFiltering && (Lockers[entid].Count > 1 || (NoPresenceSignAllowed && neededComponents.Count > 0)))
-                        {
+                        keepEntity = true;
+                        return;
+                    }
+
+                    // [D2] Историческое расхождение partial-формул (дословно за флагом,
+                    // эскалация №10). В MT-формуле neededComponents мог быть null при
+                    // отсутствии presence-sign — латентный NRE (№21) закрыт гардом.
+                    bool partialTake = partialEntityTargetListLockingAllowed && this.Spec._partialEntityFiltering &&
+                        (takeTokens
+                            ? (entityTokens.Count > 1 || (NoPresenceSignAllowed && neededComponents != null && neededComponents.Count > 0))
+                            : (yescomponent || (NoPresenceSignAllowed && !yescomponent)));
+                    keepEntity = partialTake;
+                }
+
+                if (takeTokens)
+                {
+                    entityManager.Repository.ExecuteReadLockedContinuously(entityId, (entid, contentity) =>
+                    {
+                        CheckOne(entid, contentity);
+                        if (keepEntity)
                             localExecutionEntities.Add(contentity);
-                        }
-                        else
-                        {
-                            Lockers[entid].ForEach(x => x.Dispose());
-                            Lockers.Remove(entid);
-                        }
+                    }, out var entitytoken);
+
+                    if (keepEntity)
+                    {
+                        if (entitytoken.IsReal)
+                            entityTokens.Add(entitytoken);
+                        collectedTokens.AddRange(entityTokens);
                     }
                     else
                     {
-                        localExecutionEntities.Add(contentity);
+                        entityTokens.ForEach(x => x.Dispose());
+                        if (entitytoken.IsReal)
+                            entitytoken.Dispose();
                     }
-                }, out var entitytoken);
-                if (entitytoken.IsReal && Lockers.ContainsKey(entityid))
-                    Lockers[entityid].Add(entitytoken);
-                else if (entitytoken.IsReal)
-                {
-                    entitytoken.Dispose();
                 }
-
+                else
+                {
+                    if (!entityManager.Repository.TryGetValue(entityId, out var entity))
+                    {
+                        if (LoggingLevel == ContractLoggingLevel.Verbose)
+                            NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): Entity {entityId} not found in EntityStorage");
+                        continue;
+                    }
+                    CheckOne(entityId, entity);
+                    if (keepEntity)
+                    {
+                        localExecutionEntities.Add(entity);
+                        collectedTokens.AddRange(entityTokens);
+                    }
+                    else
+                    {
+                        entityTokens.ForEach(token => token.Dispose());
+                    }
+                }
             }
+
+            // Строгий финал — общий (дословно у обоих).
             if (globalViolationSeizure && !partialEntityTargetListLockingAllowed && !NotAllIncludedEntitiesPresenceSign)
             {
-                Lockers.ForEach(x => x.Value.ForEach(y => y.Dispose()));
-                return !globalViolationSeizure;
+                collectedTokens.ForEach(token => token.Dispose());
+                lockTokens = new List<IDisposable>();
+                executionEntities = new List<ECSEntity>();
+                return false;
             }
             if (localExecutionEntities.Count == 0)
             {
-                if (LoggingLevel == ContractLoggingLevel.Verbose)
-                {
+                // [D3] Verbose «no entities passed» исторически печатал только MT-путь.
+                if (takeTokens && LoggingLevel == ContractLoggingLevel.Verbose)
                     NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): No entities passed contract requirements");
-                }
+                lockTokens = new List<IDisposable>();
+                executionEntities = new List<ECSEntity>();
                 return false;
             }
-            lockTokens = Lockers.Values.SelectMany(x => x).ToList();
+            lockTokens = collectedTokens;
             executionEntities = localExecutionEntities;
             return true;
         }

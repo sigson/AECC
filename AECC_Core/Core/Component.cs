@@ -52,31 +52,60 @@ namespace AECC.Core
         }
 
         [System.NonSerialized]
-        private ComponentLifecycleState _lifecycleState = null;
+        private ComponentLifecycleDispatcher _lifecycle = null;
 
+        // Фаза 3, шаги 1+8 (ТЗ 4.5.2, 4.5.8; чинит дефект 6.2): резиденция состояния — по
+        // профилю мира. Сервер (инстансы стабильны) — поле инстанса; клиент — источник истины
+        // identity-keyed (идея 1.11: переживание подмены инстанса при UpdateDeserialize), но
+        // с ОДНОКРАТНЫМ резолвом: новый инстанс резолвит разделяемый диспетчер из
+        // identity-таблицы один раз и держит ссылку в поле (прежний геттер ходил в
+        // GetOrAdd(instanceId, "LifecycleState") на КАЖДОЕ обращение — двойной словарный
+        // лукап со string-хешем на каждом MarkAs*/шаге обработчика). Системное поле —
+        // числовой слот (4.5.8г), скоуп — мир-владелец (4.5.8б).
         [IgnoreDataMember]
-        private ComponentLifecycleState LifecycleState
+        private ComponentLifecycleDispatcher Lifecycle
         {
             get
             {
-                if (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client)
+                var d = _lifecycle;
+                if (d != null) return d;
+
+                var world = this.ECSWorldOwner;
+                ComponentLifecycleDispatcher created;
+                if (world != null && world.Profile.IdentityKeyedLifecycleState) // профиль (ТЗ 4.5.2/4.5.6)
                 {
-                    // Кешируем в ECSSharedField один легкий объект состояния
-                    return ECSSharedField<ComponentLifecycleState>.GetOrAdd(
-                        this.instanceId, 
-                        "LifecycleState", 
-                        () => new ComponentLifecycleState()
-                    );
+                    created = (ComponentLifecycleDispatcher)SharedFieldTable
+                        .GetRow(world.instanceId, this.instanceId)
+                        .GetOrAddSystem(SystemFieldId.LifecycleState, () => new ComponentLifecycleDispatcher());
                 }
                 else
                 {
-                    if (_lifecycleState == null)
-                    {
-                        _lifecycleState = new ComponentLifecycleState();
-                    }
-                    return _lifecycleState;
+                    created = new ComponentLifecycleDispatcher();
                 }
+                // ФИКС ДЕФЕКТА №17 (флейк сетки «MaxActive == 2»): ленивая инициализация была
+                // неатомарной — два потока видели null и получали КАЖДЫЙ СВОЙ диспетчер
+                // (две очереди, два дрейнера). Гонка унаследована: оригинальный геттер серверной
+                // ветки делал то же `if (_x == null) _x = new ...`. CAS гарантирует единственный.
+                d = System.Threading.Interlocked.CompareExchange(ref _lifecycle, created, null) ?? created;
+                return d;
             }
+        }
+
+        /// <summary>Планировщик дрейна: мира-владельца, если он есть; иначе процессный дефолт
+        /// (DefaultScheduler == семантика прежнего прямого TaskEx.RunAsync).</summary>
+        private AECC.Abstractions.IScheduler LifecycleScheduler
+        {
+            get
+            {
+                var world = this.ECSWorldOwner;
+                return world != null ? world.Scheduler : DefaultScheduler.Instance;
+            }
+        }
+
+        private void OnLifecycleError(Exception ex)
+        {
+            NLogger.Log($"Error in component lifecycle execution: {ex.Message}\nType: {this.GetTypeFast()}");
+            NLogger.LogError(ex);
         }
 
 
@@ -92,7 +121,7 @@ namespace AECC.Core
             {
                 ownerEntity.entityComponents.DirectiveChange(this.GetType());
             }
-            if(ownerDB != null && (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server || this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Offline))
+            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking) // профиль (идея 1.12/1.15)
             {
                 ownerDB.ChangeComponent(this);
                 ownerDB.DirectiveSetChanged();
@@ -105,7 +134,7 @@ namespace AECC.Core
             {
                 ownerEntity.entityComponents.MarkComponentChanged(this, serializationSilent, eventSilent);
             }
-            if(ownerDB != null && (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server || this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Offline))
+            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking) // профиль (идея 1.12/1.15)
             {
                 ownerDB.ChangeComponent(this);
                 ownerDB.DirectiveSetChanged();
@@ -136,61 +165,6 @@ namespace AECC.Core
             return ObjectType;
         }
 
-        private void ProcessLifecycleQueue()
-        {
-            var state = LifecycleState;
-
-            // Защита от параллельного запуска нескольких обработчиков одной и той же очереди
-            if (Interlocked.CompareExchange(ref state.Processing, 1, 0) != 0)
-            {
-                return;
-            }
-
-            TaskEx.RunAsync(() =>
-            {
-                while (true)
-                {
-                    Action actionToRun = null;
-
-                    lock (state.Lock)
-                    {
-                        // СТРОГИЙ ПРИОРИТЕТ ВЫПОЛНЕНИЯ: Add -> Change -> Remove
-                        if (state.PendingAdd != null)
-                        {
-                            actionToRun = state.PendingAdd;
-                            state.PendingAdd = null;
-                        }
-                        else if (state.PendingChanges != null && state.PendingChanges.Count > 0)
-                        {
-                            actionToRun = state.PendingChanges.Dequeue();
-                        }
-                        else if (state.PendingRemove != null)
-                        {
-                            actionToRun = state.PendingRemove;
-                            state.PendingRemove = null;
-                        }
-                        else
-                        {
-                            // Очередь пуста, снимаем флаг и выходим
-                            state.Processing = 0;
-                            return; 
-                        }
-                    }
-
-                    // Выполняем задачу. (Блокировки внутри делегатов сохранят вашу логику из оригинального кода)
-                    try
-                    {
-                        actionToRun?.Invoke();
-                    }
-                    catch (Exception ex)
-                    {
-                        NLogger.Log($"Error in component lifecycle execution: {ex.Message}\nType: {this.GetTypeFast()}");
-                        NLogger.LogError(ex);
-                    }
-                }
-            });
-        }
-
         // overridable functional for damage transformer, after adding component of damage effect - in this method we send transformer action to damage transformers agregator
         /// <summary>
         /// ATTENTION! Use lock(this.SerialLocker) if you want to edit fields value for prevent serialization error!
@@ -198,25 +172,25 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void AddedReaction(ECSEntity entity)
         {
-            var state = LifecycleState;
-            lock (state.Lock)
+            var d = Lifecycle;
+            lock (d.SyncRoot)
             {
                 if (AlreadyRemovedReaction) return;
-                
-                state.PendingAdd = () =>
+
+                d.SetPendingAdd(() =>
                 {
-                    lock (state.Lock)
+                    lock (d.SyncRoot)
                     {
                         this.OnAdded(entity);
                     }
-                };
+                });
             }
-            ProcessLifecycleQueue();
+            d.Drain(LifecycleScheduler, OnLifecycleError);
         }
 
         protected virtual void OnAdded(ECSEntity entity)
         {
-            if (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server)
+            if (this.ECSWorldOwner != null && this.ECSWorldOwner.Profile.ServerMarksChangedOnAdd) // профиль (идея 1.15)
             {
                 this.MarkAsChanged();
             }
@@ -228,23 +202,20 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void ChangeReaction(ECSEntity entity)
         {
-            var state = LifecycleState;
-            lock (state.Lock)
+            var d = Lifecycle;
+            lock (d.SyncRoot)
             {
                 if (AlreadyRemovedReaction) return;
 
-                if (state.PendingChanges == null)
-                    state.PendingChanges = new Queue<Action>();
-
-                state.PendingChanges.Enqueue(() =>
+                d.EnqueueChange(() =>
                 {
-                    lock (state.Lock)
+                    lock (d.SyncRoot)
                     {
                         this.OnChanged(entity);
                     }
                 });
             }
-            ProcessLifecycleQueue();
+            d.Drain(LifecycleScheduler, OnLifecycleError);
         }
 
         protected virtual void OnChanged(ECSEntity entity)
@@ -260,20 +231,20 @@ namespace AECC.Core
             if (AlreadyRemovedReaction) return;
             AlreadyRemovedReaction = true;
 
-            var state = LifecycleState;
-            lock (state.Lock)
+            var d = Lifecycle;
+            lock (d.SyncRoot)
             {
-                state.PendingRemove = () =>
+                d.SetPendingRemove(() =>
                 {
-                    lock (state.Lock)
+                    lock (d.SyncRoot)
                     {
                         this.OnRemoved(entity);
                         ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
                         this.IECSDispose();
                     }
-                };
+                });
             }
-            ProcessLifecycleQueue();
+            d.Drain(LifecycleScheduler, OnLifecycleError);
         }
 
         protected virtual void OnRemoved(ECSEntity entity)
@@ -303,24 +274,10 @@ namespace AECC.Core
             ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
 
             // Сброс состояния для переиспользования компонента
-            lock (LifecycleState.Lock)
-            {
-                LifecycleState.PendingAdd = null;
-                LifecycleState.PendingChanges?.Clear();
-                LifecycleState.PendingRemove = null;
-                LifecycleState.Processing = 0;
-                AlreadyRemovedReaction = false;
-            }
+            Lifecycle.Reset();
+            AlreadyRemovedReaction = false;
         }
         public object Clone() => MemberwiseClone();
 
-        public class ComponentLifecycleState
-        {
-            public readonly object Lock = new object();
-            public int Processing = 0;
-            public Action PendingAdd = null;
-            public Queue<Action> PendingChanges = null;
-            public Action PendingRemove = null;
-    }
     }
 }

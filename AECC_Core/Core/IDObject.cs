@@ -18,7 +18,22 @@ namespace AECC.Core
     public abstract class IDObject
     {
         static public long Id { get; set; } = 0;
-        static public long GId<T>() => EntitySerializer.TypeIdStorage[typeof(T)];
+
+        // Фаза 2 (мандат ТЗ 4.3): static-generic фаст-путь — горячее чтение статического поля
+        // вместо словарного лукапа на каждый вызов. 0 = «ещё не зарегистрирован» → повторный
+        // резолв (безопасно при любой очерёдности инициализации; тип с легитимным id 0 —
+        // IECSObject — просто не кэшируется, что эквивалентно старому поведению).
+        // Контракт сохранён дословно: незарегистрированный тип -> KeyNotFoundException
+        // (семантика бывшего TypeIdStorage[typeof(T)]).
+        private static class GIdCache<T> { public static long Id; }
+        static public long GId<T>()
+        {
+            long id = GIdCache<T>.Id;
+            if (id != 0) return id;
+            id = TypeRegistry.Global.GetRegisteredIdOrThrow(typeof(T));
+            GIdCache<T>.Id = id;
+            return id;
+        }
         public long instanceId = Guid.NewGuid().GuidToLongR();
 
         public long ECSWorldOwnerId = 0;

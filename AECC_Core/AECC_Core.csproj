@@ -1,14 +1,29 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <RootNamespace>AECC.Core</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
+
+  <!-- Legacy\attic — вне компиляции (решение заказчика 0.4.1): бинарные архивы и
+       мусорные файлы сохраняются, но не собираются. Перенесено 1:1 из AECC.Legacy. -->
+  <ItemGroup>
+    <Compile Remove="Legacy\attic\**" />
+    <None Include="Legacy\attic\**" />
+  </ItemGroup>
+
+  <!-- Полный набор NuGet-зависимостей объединённых модулей:
+         DefaultEcs                        — Core/Query (штатный движок граф-поиска)
+         Microsoft.Extensions.ObjectPool   — Legacy\LockedDictionaryPooled.cs
+         Microsoft.VisualStudio.Threading  — Legacy\RWLockAsync.cs
+         System.Threading.Tasks.Extensions — ValueTask<> на netstandard2.0 -->
   <ItemGroup>
     <PackageReference Include="DefaultEcs" Version="0.17.2" />
     <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.3" />
     <PackageReference Include="Microsoft.VisualStudio.Threading" Version="17.14.15" />
     <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
   </ItemGroup>
+
 </Project>

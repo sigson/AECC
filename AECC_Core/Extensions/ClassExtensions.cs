@@ -64,42 +64,24 @@ namespace AECC.Extensions
 
         public static Type IdToECSType(this long id)
         {
-            if (AECC.Core.Serialization.EntitySerializer.TypeStorage.TryGetValue(id, out var result))
-            {
-                return result;
-            }
-            return default;
+            return AECC.Core.TypeRegistry.Global.GetType(id);
         }
 
+        /// <summary>Фаза 2, дефект 6.1: резолв мемоизирован в реестре — рефлексия один раз
+        /// на тип за процесс вместо каждого обращения к компоненту по Type (Kid()).</summary>
         public static long TypeId(this Type id)
         {
-            try
-            {
-                return id.GetCustomAttribute<AECC.Core.TypeUidAttribute>().Id;
-            }
-            catch
-            {
-                NLogger.Error(id.ToString() + " no have static id field or ID attribute");    
-            }
-            return default;
+            return AECC.Core.TypeRegistry.Global.GetId(id);
         }
 
         public static long IdToECSType(this Type id)
         {
-            if (AECC.Core.Serialization.EntitySerializer.TypeIdStorage.TryGetValue(id, out var result))
-            {
-                return result;
-            }
-            return default;
+            return AECC.Core.TypeRegistry.Global.GetRegisteredId(id);
         }
 
         public static Type NameToECSType(this string componentName)
         {
-            if (AECC.Core.Serialization.EntitySerializer.TypeStringStorage.TryGetValue(componentName, out var result))
-            {
-                return result;
-            }
-            return default;
+            return AECC.Core.TypeRegistry.Global.GetType(componentName);
         }
 
         public static long NameToECSId(this string componentName)

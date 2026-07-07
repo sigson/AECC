@@ -1,0 +1,21 @@
+var engine = new GraphSearchEngine(maxGraphNodes: 1000000);
+
+// Устанавливаем топологию для нашего "текущего объекта" с ID 1
+engine.SetNeighbors(1, new int[] { 1042, 2045, 5000, 9999, 15000 });
+
+// Асинхронно прилетают метрики (Абсорбция в L0 MemTable)
+engine.AddMetricToNode(1042, "sensor:temperature>80");
+engine.AddMetricToNode(1042, "status:critical");
+// Узел 2045 подходит под условия, но находится на обслуживании
+engine.AddMetricToNode(2045, "sensor:temperature>80");
+engine.AddMetricToNode(2045, "status:critical");
+engine.AddMetricToNode(2045, "maintenance:active"); 
+
+// Выполнение сложного запроса
+var matchedNodes = engine.Search(
+    sourceNodeId: 1, 
+    withMetrics: new[] { "sensor:temperature>80", "status:critical" }, 
+    withoutMetrics: new[] { "maintenance:active" }
+);
+
+// matchedNodes мгновенно вернет [ 1042 ]

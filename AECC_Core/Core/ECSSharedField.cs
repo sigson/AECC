@@ -1,72 +1,57 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using AECC.Extensions;
 
 namespace AECC.Core
 {
-    public static class ECSSharedDictionaryCache
-    {
-        public static Dictionary<long, Dictionary<string, object>> fieldsCache = new Dictionary<long, Dictionary<string, object>>();
-    }
+    /// <summary>
+    /// Identity-sidecar (идея 1.11, решение заказчика 0.4.2 — ОБЯЗАН ОСТАТЬСЯ): значения
+    /// привязаны к instanceId и переживают подмену инстанса при клиентском UpdateDeserialize.
+    ///
+    /// Фаза 3, шаг 8 (ТЗ 4.5.8): публичная поверхность дословно прежняя, бэкенд —
+    /// потокобезопасный <see cref="SharedFieldTable"/> (чинит гонку 6.3). Статический API
+    /// работает в процессном скоупе (ProcessScope = 0); пер-мировые данные и числовые
+    /// системные слоты — через SharedFieldTable напрямую (потребители кэшируют ссылку
+    /// на строку — мандат горячего пути 4.5.8в).
+    ///
+    /// BREAKING (журналируется): убран публичный сырой Dictionary
+    /// ECSSharedDictionaryCache.fieldsCache — прямой доступ к небезопасному кэшу и был
+    /// источником гонки; замены — статический API ниже или SharedFieldTable.
+    /// </summary>
     public class ECSSharedField<T> : IDisposable
     {
-
-
-        private static Dictionary<long, Dictionary<string, object>> fieldsCache => ECSSharedDictionaryCache.fieldsCache;
-
         public T Value { get => GetValue(); set => SetValue(value); }
 
         private readonly long entityId;
         private readonly string fieldName;
+        // Мандат 4.5.8в: строка идентичности резолвится ОДИН РАЗ при конструировании,
+        // дальше — работа по ссылке.
+        private readonly SharedFieldTable.Row row;
 
         public ECSSharedField(long id, string name, T value)
         {
             entityId = id;
             fieldName = name;
+            row = SharedFieldTable.GetRow(SharedFieldTable.ProcessScope, id);
 
-            // Проверяем, есть ли словарь для данного ID
-            if (!fieldsCache.ContainsKey(id))
-            {
-                fieldsCache[id] = new Dictionary<string, object>();
-            }
-
-            // Проверяем, есть ли уже значение в кеше
-            if (fieldsCache[id].ContainsKey(name))
-            {
-                // Используем существующее значение из кеша
-                Value = (T)fieldsCache[id][name];
-            }
-            else
-            {
-                // Сохраняем новое значение в кеш
-                Value = value;
-                fieldsCache[id][name] = value;
-            }
+            // Семантика прежнего конструктора: существующее значение выигрывает,
+            // иначе кладём переданное (теперь — атомарно).
+            object stored = row.Named.GetOrAdd(name, (object)value);
+            Value = stored is T typed ? typed : value;
         }
 
         private T GetValue()
         {
-            if (fieldsCache.ContainsKey(entityId) && fieldsCache[entityId].ContainsKey(fieldName))
+            object value;
+            if (row.TryGetNamed(fieldName, out value) && value is T typedValue)
             {
-                var value = fieldsCache[entityId][fieldName];
-                if (value is T typedValue)
-                {
-                    return typedValue;
-                }
+                return typedValue;
             }
             return default(T);
         }
 
         private void SetValue(T value)
         {
-            if (!fieldsCache.ContainsKey(entityId))
-            {
-                fieldsCache[entityId] = new Dictionary<string, object>();
-            }
-            fieldsCache[entityId][fieldName] = value;
+            row.Named[fieldName] = value;
         }
 
         /// <summary>
@@ -75,32 +60,19 @@ namespace AECC.Core
         public void UpdateValue(T newValue)
         {
             Value = newValue;
-            if (fieldsCache.ContainsKey(entityId) && fieldsCache[entityId].ContainsKey(fieldName))
-            {
-                fieldsCache[entityId][fieldName] = newValue;
-            }
         }
 
         public static T GetOrAdd(long id, string name, Func<T> valueFactory)
         {
-            // Проверяем наличие значения в кеше
-            if (fieldsCache.ContainsKey(id) && fieldsCache[id].ContainsKey(name))
+            var row = SharedFieldTable.GetRow(SharedFieldTable.ProcessScope, id);
+            object stored = row.Named.GetOrAdd(name, _ => (object)valueFactory());
+            if (stored is T typedValue)
             {
-                var cachedValue = fieldsCache[id][name];
-                if (cachedValue is T typedValue)
-                {
-                    return typedValue;
-                }
+                return typedValue;
             }
-
-            // Если значения нет, создаем новое
-            if (!fieldsCache.ContainsKey(id))
-            {
-                fieldsCache[id] = new Dictionary<string, object>();
-            }
-
+            // Семантика прежнего кода: значение чужого типа под этим именем — заменить своим.
             T newValue = valueFactory();
-            fieldsCache[id][name] = newValue;
+            row.Named[name] = newValue;
             return newValue;
         }
 
@@ -117,9 +89,12 @@ namespace AECC.Core
         /// </summary>
         public static T GetCachedValue(long id, string name)
         {
-            if (fieldsCache.ContainsKey(id) && fieldsCache[id].ContainsKey(name))
+            SharedFieldTable.Row row;
+            object value;
+            if (SharedFieldTable.TryGetRow(SharedFieldTable.ProcessScope, id, out row)
+                && row.TryGetNamed(name, out value))
             {
-                return (T)fieldsCache[id][name];
+                return (T)value;
             }
             return default(T);
         }
@@ -129,7 +104,10 @@ namespace AECC.Core
         /// </summary>
         public static bool HasCachedValue(long id, string name)
         {
-            return fieldsCache.ContainsKey(id) && fieldsCache[id].ContainsKey(name);
+            SharedFieldTable.Row row;
+            object value;
+            return SharedFieldTable.TryGetRow(SharedFieldTable.ProcessScope, id, out row)
+                   && row.TryGetNamed(name, out value);
         }
 
         /// <summary>
@@ -137,11 +115,7 @@ namespace AECC.Core
         /// </summary>
         public static object SetCachedValue(long id, string name, object value)
         {
-            if (!fieldsCache.ContainsKey(id))
-            {
-                fieldsCache[id] = new Dictionary<string, object>();
-            }
-            fieldsCache[id][name] = value;
+            SharedFieldTable.GetRow(SharedFieldTable.ProcessScope, id).Named[name] = value;
             return value;
         }
 
@@ -150,19 +124,19 @@ namespace AECC.Core
         /// </summary>
         public static bool RemoveCachedValue(long id, string name)
         {
-            if (fieldsCache.ContainsKey(id) && fieldsCache[id].ContainsKey(name))
-            {
-                return fieldsCache[id].Remove(name);
-            }
-            return false;
+            SharedFieldTable.Row row;
+            object _;
+            return SharedFieldTable.TryGetRow(SharedFieldTable.ProcessScope, id, out row)
+                   && row.Named.TryRemove(name, out _);
         }
 
         /// <summary>
-        /// Удаляет все значения для конкретного ID
+        /// Удаляет все значения для конкретного ID. Дисциплина идеи 1.11: чистит идентичность
+        /// ПО ВСЕМ скоупам (процессному и пер-мировым) — контракт «OnRemoved вычищает всё».
         /// </summary>
         public static bool RemoveAllCachedValuesForId(long id)
         {
-            return fieldsCache.Remove(id);
+            return SharedFieldTable.RemoveIdentityEverywhere(id);
         }
 
         /// <summary>
@@ -170,7 +144,7 @@ namespace AECC.Core
         /// </summary>
         public static void ClearCache()
         {
-            fieldsCache.Clear();
+            SharedFieldTable.Clear();
         }
 
         /// <summary>
@@ -178,7 +152,7 @@ namespace AECC.Core
         /// </summary>
         public static int GetCachedIdsCount()
         {
-            return fieldsCache.Count;
+            return SharedFieldTable.IdentityCount(SharedFieldTable.ProcessScope);
         }
 
         /// <summary>
@@ -186,11 +160,8 @@ namespace AECC.Core
         /// </summary>
         public static int GetCachedFieldsCount(long id)
         {
-            if (fieldsCache.ContainsKey(id))
-            {
-                return fieldsCache[id].Count;
-            }
-            return 0;
+            SharedFieldTable.Row row;
+            return SharedFieldTable.TryGetRow(SharedFieldTable.ProcessScope, id, out row) ? row.NamedCount : 0;
         }
 
         /// <summary>
@@ -198,24 +169,17 @@ namespace AECC.Core
         /// </summary>
         public static IEnumerable<string> GetCachedFieldNames(long id)
         {
-            if (fieldsCache.ContainsKey(id))
+            SharedFieldTable.Row row;
+            if (SharedFieldTable.TryGetRow(SharedFieldTable.ProcessScope, id, out row))
             {
-                return fieldsCache[id].Keys;
+                return row.NamedKeys;
             }
             return new List<string>();
         }
 
-        /// <summary>
-        /// Получает все ID из кеша
-        /// </summary>
-        public static IEnumerable<long> GetAllCachedIds()
-        {
-            return fieldsCache.Keys;
-        }
-
         public void Dispose()
         {
-            //fieldsCache[entityId].Remove(fieldName);
+            //row.Named.TryRemove(fieldName, out _);  // прежняя семантика: Dispose ничего не чистит
         }
     }
 }

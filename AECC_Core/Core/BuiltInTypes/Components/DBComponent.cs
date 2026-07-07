@@ -6,10 +6,6 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using AECC.Extensions;
-using AECC.Core.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.IO;
 using AECC.Extensions.ThreadingSync;
 using System.Diagnostics;
@@ -22,7 +18,7 @@ namespace AECC.Core.BuiltInTypes.Components
 {
     [System.Serializable]
     [TypeUid(11)]
-    public class DBComponent : ECSComponent
+    public class DBComponent : ECSComponent, AECC.Abstractions.ISerializationParticipant
     {
         static public new long Id { get; set; } = 11;
 
@@ -31,6 +27,23 @@ namespace AECC.Core.BuiltInTypes.Components
         public DBLoggingLevel LoggingLevel = DBLoggingLevel.None;
 
         public Dictionary<IECSObjectPathContainer, List<dbRow>> serializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
+
+        // ФАЗА 4, шаг 2 (ТЗ 4.7): мост участника сериализации — сериализатор/хранилище
+        // зовут интерфейс, не зная конкретного DBComponent. Семантика дословно прежняя.
+        void AECC.Abstractions.ISerializationParticipant.BeforeSnapshot(bool serializeOnlyChanged, bool clearChanged)
+        {
+            SerializeDB(serializeOnlyChanged, clearChanged);
+        }
+
+        void AECC.Abstractions.ISerializationParticipant.AfterSnapshot(bool clearChanged)
+        {
+            AfterSerializationDB(clearChanged);
+        }
+
+        void AECC.Abstractions.ISerializationParticipant.AfterRestore(bool clientRetry)
+        {
+            UnserializeDB(clientRetry);
+        }
 
         public virtual void SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
         {
@@ -83,23 +96,23 @@ namespace AECC.Core.BuiltInTypes.Components
         private int _unserializeDepth = 0;
 
         /// <summary>
-        /// Единый авторитет синхронизации DB — StabilizationLocker сущности-владельца.
+        /// Единый авторитет синхронизации DB — StabilizationGate сущности-владельца (бывш. StabilizationLocker).
         /// До привязки к сущности (фабричный контекст) ownerEntity == null и доступ
         /// гарантированно однопоточный, поэтому реальный захват не нужен (no-op scope).
         /// </summary>
         private IDisposable DbReadScope()
         {
             var ec = this.ownerEntity?.entityComponents;
-            return ec != null ? (IDisposable)ec.StabilizationLocker.ReadLock() : null;
+            return ec != null ? (IDisposable)ec.StabilizationGate.ReadLock() : null;
         }
         private IDisposable DbWriteScope()
         {
             var ec = this.ownerEntity?.entityComponents;
-            return ec != null ? (IDisposable)ec.StabilizationLocker.WriteLock() : null;
+            return ec != null ? (IDisposable)ec.StabilizationGate.WriteLock() : null;
         }
 
         /// <summary>
-        /// Debug-only инвариант: мутация DB должна выполняться под write-гейтом StabilizationLocker.
+        /// Debug-only инвариант: мутация DB должна выполняться под write-гейтом StabilizationGate.
         /// До привязки к сущности (ownerEntity == null) и в OneThreadMode (Mock-лок) проверка не
         /// применяется — там доступ однопоточный по контракту. В Release вырезается компилятором.
         /// </summary>
@@ -108,11 +121,11 @@ namespace AECC.Core.BuiltInTypes.Components
         {
             if (ownerEntity == null || Defines.OneThreadMode)
                 return;
-            var rw = ownerEntity.entityComponents?.StabilizationLocker;
+            var rw = ownerEntity.entityComponents?.StabilizationGate;
             if (rw?.lockobj == null)
                 return;
             System.Diagnostics.Debug.Assert(rw.lockobj.IsWriteLockHeld,
-                "ComponentsDBComponent: мутация DB вне write-гейта StabilizationLocker");
+                "ComponentsDBComponent: мутация DB вне write-гейта StabilizationGate");
         }
 
         public enum ComponentState
@@ -123,18 +136,396 @@ namespace AECC.Core.BuiltInTypes.Components
             Null
         }
 
+        // ═══ ФАЗА 7 (ТЗ 4.9): разрез DBComponent → DbStore + DbSerialization, слайс 1 ═══
+        // Владение ДАННЫМИ разложено по осям изменения: DbStore — живая сторона
+        // (строки-состояния, владельцы, dirty), DbSerialization — restore-сторона
+        // (пути владельцев, NonEO-парковка retry, счётчик проверок). Всё перенесённое
+        // было [NonSerialized] — wire-контракт не тронут; serializedDB остаётся
+        // ФИЗИЧЕСКИМ сериализуемым полем компонента (wire-данные, суждение фазы 4
+        // о HasChildChanges). Публичный API — делегирующие свойства с прежними именами:
+        // ~200 внутренних касаний и сетка 9(к) не тронуты. Слайс 2 (перенос ЛОГИКИ
+        // Serialize/Unserialize/AfterDeserialize в DbSerialization) — следующий шаг.
+
+        public sealed class DbStore
+        {
+            public Dictionary<long, Dictionary<long, (ECSComponent, ComponentState)>> Rows = new Dictionary<long, Dictionary<long, (ECSComponent, ComponentState)>>();
+            public Dictionary<long, long> ComponentOwners = new Dictionary<long, long>();
+            public Dictionary<long, int> ChangedComponents = new Dictionary<long, int>();
+        }
+
+        public sealed class DbSerialization
+        {
+            public Dictionary<long, IECSObjectPathContainer> OwnerPaths = new Dictionary<long, IECSObjectPathContainer>();
+            public DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)> NonEO = new DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)>();
+            internal int UnserializeCheckCount = 0;
+
+            public void SerializeDB(ComponentsDBComponent owner, bool serializeOnlyChanged, bool clearChanged)
+        {
+            Dictionary<IECSObjectPathContainer, List<dbRow>> newSerializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
+            // Стабильность owner.DB на время сериализации обеспечивается внешним ReadLock
+            // (EntityNetSerializer.SlicedSerialize) + однопоточным контрактом owner.DB-компонента.
+            {
+                owner.serializedDB.Clear();
+                List<long> errorChanged = new List<long>();
+                
+                if (owner.LoggingLevel >= DBLoggingLevel.CountOnly)
+                {
+                    NLogger.Log($"[DB SerializeDB] Starting serialization (OnlyChanged: {serializeOnlyChanged}, ClearChanged: {clearChanged})");
+                }
+                
+                if (serializeOnlyChanged)
+                {
+                    Dictionary<long, List<dbRow>> serializedComp = new Dictionary<long, List<dbRow>>();
+                    Dictionary<IECSObjectPathContainer, List<dbRow>> serializedCompPath = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
+
+                    foreach (var changedComponent in owner.ChangedComponents)
+                    {
+                        try
+                        {
+                            var ownerId = owner.ComponentOwners[changedComponent.Key];
+                            var component = owner.DB[ownerId][changedComponent.Key];
+
+                            List<dbRow> components = null;
+                            serializedComp.TryGetValue(ownerId, out components);
+                            if (components == null)
+                                components = new List<dbRow>();
+                            component.Item1.EnterToSerialization();
+                            components.Add(new dbRow()
+                            {
+                                component = component.Item1,
+                                componentInstanceId = component.Item1.instanceId,
+                                componentId = component.Item1.GetId(),
+                                componentState = component.Item2
+                            });
+                            serializedComp[ownerId] = components;
+                            serializedCompPath[owner.OwnerPaths[ownerId]] = components;
+                        }
+                        catch (Exception ex)
+                        {
+                            errorChanged.Add(changedComponent.Key);
+                        }
+                    }
+                    newSerializedDB = serializedCompPath;
+                }
+                else
+                {
+                    foreach (var entityRow in owner.DB)
+                    {
+                        if (entityRow.Value == null)
+                            continue;
+                        List<dbRow> components = new List<dbRow>();
+                        var entityRowValues = entityRow.Value.Values.ToList();
+                        for (int i = 0; i < entityRowValues.Count; i++)
+                        {
+                            var ecsComponent = entityRowValues[i];
+                            ecsComponent.Item1.EnterToSerialization();
+                            components.Add(new dbRow()
+                            {
+                                component = ecsComponent.Item1,
+                                componentInstanceId = ecsComponent.Item1.instanceId,
+                                componentId = ecsComponent.Item1.GetId(),
+                                componentState = ecsComponent.Item2
+                            });
+
+                        }
+                        newSerializedDB[owner.OwnerPaths[entityRow.Key]] = components;
+                    }
+                }
+                
+                if (owner.LoggingLevel >= DBLoggingLevel.CountOnly)
+                {
+                    NLogger.Log($"[DB SerializeDB] Serialized {newSerializedDB.Count} owners, {errorChanged.Count} errors");
+                }
+                
+                if (clearChanged)
+                    owner.ChangedComponents.Clear();
+                errorChanged.ForEach(x => owner.ChangedComponents[x] = 1);
+
+                owner.serializedDB = newSerializedDB;
+            }
+            if (owner.LoggingLevel >= DBLoggingLevel.CountOnly)
+            {
+                var elementsOwners = new StringBuilder();
+                foreach (var serializedRow in newSerializedDB)
+                {
+                    elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
+                    foreach (var dbrow in serializedRow.Value)
+                    {
+                        elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
+                    }
+                    elementsOwners.AppendLine("}");
+                }
+
+                var elementsOwnersEO = new StringBuilder();
+                foreach (var serializedRow in owner.serializedDBNonEO)
+                {
+                    elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
+                    foreach (var dbrow in serializedRow.Value.Item1)
+                    {
+                        elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
+                    }
+                    elementsOwners.AppendLine("}");
+                }
+                NLogger.Log($"[DB UnserializeDB] Starting deserialization of {newSerializedDB.Count} owners with elements:\n {elementsOwners} \n AND HAS NullEntityOwner:\n {elementsOwnersEO}");
+            }
+        }
+
+            public void UnserializeDB(ComponentsDBComponent owner, bool retryNullEntityOwner)
+        {
+            owner._unserializeDepth++;
+            try
+            {
+            lock (owner.serializedDB)
+            {
+                if (owner.LoggingLevel >= DBLoggingLevel.CountOnly)
+                {
+                    var elementsOwners = new StringBuilder();
+                    foreach (var serializedRow in owner.serializedDB)
+                    {
+                        elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
+                        foreach (var dbrow in serializedRow.Value)
+                        {
+                            elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
+                        }
+                        elementsOwners.AppendLine("}");
+                    }
+
+                    var elementsOwnersEO = new StringBuilder();
+                    foreach (var serializedRow in owner.serializedDBNonEO)
+                    {
+                        elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
+                        foreach (var dbrow in serializedRow.Value.Item1)
+                        {
+                            elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
+                        }
+                        elementsOwners.AppendLine("}");
+                    }
+                    NLogger.Log($"[DB UnserializeDB] Starting deserialization of {owner.serializedDB.Count} owners with elements:\n {elementsOwners} \n AND HAS NullEntityOwner:\n {elementsOwnersEO}");
+                }
+
+                if (retryNullEntityOwner)
+                {
+                    owner.serializedDBNonEO.ForEach(x => owner.serializedDB[x.Key] = x.Value.Item1);
+                    // ДЕФЕКТ №22(а), пойман сеткой 9(к): похороненная (cap 10) строка
+                    // удалялась только из NonEO — её слитая копия ВЫЖИВАЛА в owner.serializedDB
+                    // и валила owner.AfterDeserializeDB голым индексатором. Собираем ключи
+                    // dead-letter'а и выносим их вместе со сливом ниже.
+                    var deadLettered = new List<IECSObjectPathContainer>();
+
+                    foreach (var serializedRow in owner.serializedDB)
+                    {
+                        Dictionary<long, (ECSComponent, ComponentState)> components = new Dictionary<long, (ECSComponent, ComponentState)>();
+                        owner.DB.TryGetValue(serializedRow.Key.CacheInstanceId, out components);
+                        if (components == null)
+                            components = new Dictionary<long, (ECSComponent, ComponentState)>();
+                        IECSObject entityOwner = serializedRow.Key.ECSObject;
+                        if (entityOwner == null)
+                        {
+                            if (!owner.serializedDBNonEO.ContainsKey(serializedRow.Key))
+                            {
+                                owner.serializedDBNonEO[serializedRow.Key] = (serializedRow.Value, 0);
+                            }
+
+                            if (owner.serializedDBNonEO[serializedRow.Key].Item2 >= 10)
+                            {
+                                NLogger.Log("client: error unserialize: no entity");
+                                var lostInstanceId = serializedRow.Key.serializableInstanceId;
+                                if (owner.DB.ContainsKey(lostInstanceId))
+                                {
+                                    owner.RemoveComponentsByOwner(lostInstanceId);
+                                }
+                                NLogger.Log("lost components destroyed");
+                                owner.serializedDBNonEO.Remove(serializedRow.Key);
+                                deadLettered.Add(serializedRow.Key); // №22(а): в вынос из owner.serializedDB
+                                continue;
+                            }
+
+                            owner.serializedDBNonEO[serializedRow.Key] = (serializedRow.Value, owner.serializedDBNonEO[serializedRow.Key].Item2 + 1);
+
+                        }
+                        else
+                        {
+                            if (owner.serializedDBNonEO.ContainsKey(serializedRow.Key))
+                            {
+                                owner.serializedDBNonEO.Remove(serializedRow.Key);
+                            }
+                        }
+                    }
+                    deadLettered.ForEach(k => owner.serializedDB.Remove(k)); // №22(а)
+                    if (owner.serializedDBNonEO.Count > 0)
+                    {
+                        owner.serializedDBNonEO.ForEach(x => owner.serializedDB.Remove(x.Key));
+                        owner.serializedDBNonEO.Where(x => x.Value.Item2 > 10).ToList().ForEach(x => owner.serializedDBNonEO.Remove(x.Key));
+
+                        // Событийная замена ретрай-таймера: повторить при приходе недостающей
+                        // сущности-владельца. Cap (10) и dead-letter (owner.RemoveComponentsByOwner)
+                        // остаются в блоке retryNullEntityOwner выше и срабатывают на сливах.
+                        var registry = owner.ECSWorldOwner?.entityManager?.PendingDeserialization;
+                        if (registry != null)
+                        {
+                            registry.Register(owner, () => owner.UnserializeDB(true));
+                            // register-then-recheck: владелец мог прийти во время обработки до регистрации.
+                            if (owner.serializedDBNonEO.Any(x => x.Key.ECSObject != null))
+                                TaskEx.RunAsync(() => owner.UnserializeDB(true));
+                        }
+                    }
+                    else
+                    {
+                        owner.ECSWorldOwner?.entityManager?.PendingDeserialization.Unregister(this);
+                    }
+                }
+
+                owner.ChangedComponents.Clear();
+                int addedCount = 0;
+                int updatedCount = 0;
+
+                foreach (var serializedRow in owner.serializedDB)
+                {
+                    Dictionary<long, (ECSComponent, ComponentState)> components = new Dictionary<long, (ECSComponent, ComponentState)>();
+                    owner.DB.TryGetValue(serializedRow.Key.CacheInstanceId, out components);
+                    if (components == null)
+                        components = new Dictionary<long, (ECSComponent, ComponentState)>();
+                    IECSObject entityOwner = serializedRow.Key.ECSObject;
+                    if (entityOwner != null)
+                    {
+                        foreach (var component in serializedRow.Value)
+                        {
+                            var unserComp = (ECSComponent)ReflectionCopy.MakeReverseShallowCopy(component.component);
+                            component.componentInstanceId = unserComp.instanceId;
+                            if (!owner.OwnerPaths.ContainsKey(entityOwner.instanceId))
+                            {
+                                owner.OwnerPaths[entityOwner.instanceId] = new IECSObjectPathContainer(owner.ECSWorldOwnerId, true) { ECSObject = entityOwner };
+                            }
+                            if (entityOwner is ECSEntity eCSEntity)
+                            {
+                                unserComp.ownerEntity = eCSEntity;
+                            }
+                            else if (entityOwner is ECSComponent eCSComponent)
+                            {
+                                unserComp.ownerEntity = eCSComponent.ownerEntity;
+                            }
+                            unserComp.ownerDB = owner;
+                            if (!components.ContainsKey(unserComp.instanceId))
+                            {
+                                components[unserComp.instanceId] = (unserComp, component.componentState);
+                                owner.ComponentOwners[unserComp.instanceId] = entityOwner.instanceId;
+                                unserComp.AfterDeserialization();
+                                // Реакции эмитятся единожды в owner.AfterDeserializeDB по componentState
+                                // (Created→Added, Changed→Change, Removed→Removing). Здесь только
+                                // материализация компонента в owner.DB — без дублирующей AddedReaction,
+                                // которая раньше давала двойную реакцию для Changed и "мигание"
+                                // (Added→Removing) для Removed.
+                                addedCount++;
+                            }
+                            else
+                            {
+                                //unserComp.componentManagers = components[unserComp.instanceId].Item1.componentManagers;
+                                components[unserComp.instanceId] = (unserComp, component.componentState);
+                                unserComp.AfterDeserialization();
+                                updatedCount++;
+                            }
+                            owner.ChangedComponents[unserComp.instanceId] = 1;
+                        }
+                        owner.DB[serializedRow.Key.CacheInstanceId] = components;
+                    }
+                    else
+                    {
+                        NLogger.Error("error unserialize: no entity");
+                    }
+                }
+
+                if (owner.LoggingLevel >= DBLoggingLevel.CountOnly)
+                {
+                    NLogger.Log($"[DB UnserializeDB] Deserialized - Added: {addedCount}, Updated: {updatedCount}");
+                }
+
+                owner.AfterDeserializeDB();
+                owner.serializedDB.Clear();
+            }
+            }
+            finally
+            {
+                owner._unserializeDepth--;
+            }
+        }
+
+            public void AfterDeserializeDB(ComponentsDBComponent owner)
+        {
+            int createdCount = 0;
+            int changedCount = 0;
+            int removedCount = 0;
+            
+            foreach (var entityRow in owner.serializedDB)
+            {
+                var entityRowValues = entityRow.Value.ToList();
+                for (int i = 0; i < entityRowValues.Count; i++)
+                {
+                    // ДЕФЕКТ №22(б): голый индексатор падал KeyNotFound'ом на строке,
+                    // чей владелец не был восстановлен (dead-letter/гонка) — теперь скип
+                    // с ERRORDB-логом (реакции по несуществующему владельцу не эмитим).
+                    if (!owner.DB.TryGetValue(entityRow.Key.CacheInstanceId, out var ownerList) || ownerList == null)
+                    {
+                        NLogger.LogErrorDB($"AfterDeserializeDB: owner {entityRow.Key.CacheInstanceId} absent in live owner.DB — row skipped");
+                        break;
+                    }
+                    if (entityRowValues[i].componentState == ComponentState.Removed && !ownerList.ContainsKey(entityRowValues[i].componentInstanceId))
+                    {
+                        NLogger.LogErrorDB("remove db component duplicate");
+                        continue;
+                    }
+                    var ecsComponent = ownerList[entityRowValues[i].componentInstanceId];
+                    if (ecsComponent.Item2 == ComponentState.Created)
+                    {
+                        ecsComponent.Item1.AddedReaction(ecsComponent.Item1.ownerEntity);
+                        createdCount++;
+                    }
+                    if (ecsComponent.Item2 == ComponentState.Changed)
+                    {
+                        //ecsComponent.Item1.OnAdded(ecsComponent.Item1.ownerEntity);
+                        TaskEx.RunAsync(() =>
+                        {
+                            ecsComponent.Item1.ChangeReaction(ecsComponent.Item1.ownerEntity);
+                        });
+                        changedCount++;
+                    }
+                    if (ecsComponent.Item2 == ComponentState.Removed)
+                    {
+                        ecsComponent.Item1.RemovingReaction(ecsComponent.Item1.ownerEntity);
+                        ownerList.Remove(ecsComponent.Item1.instanceId);
+                        owner.ComponentOwners.Remove(ecsComponent.Item1.instanceId);
+                        removedCount++;
+                    }
+                }
+            }
+            
+            if (owner.LoggingLevel >= DBLoggingLevel.CountOnly)
+            {
+                NLogger.Log($"[DB AfterDeserializeDB] Processed - Created: {createdCount}, Changed: {changedCount}, Removed: {removedCount}");
+                owner.LogDBState("AfterDeserializeDB Complete");
+            }
+        }
+
+        }
+
         [System.NonSerialized]
-        public Dictionary<long, Dictionary<long, (ECSComponent, ComponentState)>> DB = new Dictionary<long, Dictionary<long, (ECSComponent, ComponentState)>>();
+        [IgnoreDataMember]
+        public DbStore Store = new DbStore();
         [System.NonSerialized]
-        public Dictionary<long, long> ComponentOwners = new Dictionary<long, long>();
-        [System.NonSerialized]
-        public Dictionary<long, IECSObjectPathContainer> OwnerPaths = new Dictionary<long, IECSObjectPathContainer>();
-        [System.NonSerialized]
-        public Dictionary<long, int> ChangedComponents = new Dictionary<long, int>();
+        [IgnoreDataMember]
+        public DbSerialization Serial = new DbSerialization();
+
+        [IgnoreDataMember]
+        public Dictionary<long, Dictionary<long, (ECSComponent, ComponentState)>> DB { get { return Store.Rows; } set { Store.Rows = value; } }
+        [IgnoreDataMember]
+        public Dictionary<long, long> ComponentOwners { get { return Store.ComponentOwners; } set { Store.ComponentOwners = value; } }
+        [IgnoreDataMember]
+        public Dictionary<long, IECSObjectPathContainer> OwnerPaths { get { return Serial.OwnerPaths; } set { Serial.OwnerPaths = value; } }
+        [IgnoreDataMember]
+        public Dictionary<long, int> ChangedComponents { get { return Store.ChangedComponents; } set { Store.ChangedComponents = value; } }
 
         #region Logging Helper Methods
 
-        private void LogDBState(string operation, List<(ECSComponent component, ComponentState state, string action)> changes = null)
+        internal void LogDBState(string operation, List<(ECSComponent component, ComponentState state, string action)> changes = null)
         {
             if (LoggingLevel == DBLoggingLevel.None) return;
 
@@ -225,7 +616,7 @@ namespace AECC.Core.BuiltInTypes.Components
             ECSComponent addedComponent = null;
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
-            using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
+            using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
                     this.AssertDbWriteGate();
@@ -264,7 +655,7 @@ namespace AECC.Core.BuiltInTypes.Components
             bool change = false;
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
-            using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
+            using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
                     this.AssertDbWriteGate();
@@ -372,7 +763,7 @@ namespace AECC.Core.BuiltInTypes.Components
                 {
                     if (!ComponentOwners.TryGetValue(componentId, out owner))
                     {
-                        if(this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client && _unserializeDepth > 0)
+                        if(this.ECSWorldOwner.Profile.ClientRetryOnMissingRefs && _unserializeDepth > 0) // профиль (идея 1.15)
                         {
                             NLogger.Log("SETUP_UNSERIALIZE error get component from db");
                         }
@@ -454,7 +845,7 @@ namespace AECC.Core.BuiltInTypes.Components
             
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
-            using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
+            using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
                     this.AssertDbWriteGate();
@@ -492,7 +883,7 @@ namespace AECC.Core.BuiltInTypes.Components
             ECSComponent removedComponent = null;
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
-            using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
+            using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
                     this.AssertDbWriteGate();
@@ -557,7 +948,7 @@ namespace AECC.Core.BuiltInTypes.Components
             List<ECSComponent> removedComponents = new List<ECSComponent>();
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
-            using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
+            using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
                     this.AssertDbWriteGate();
@@ -611,7 +1002,7 @@ namespace AECC.Core.BuiltInTypes.Components
             List<ECSComponent> removedComponents = new List<ECSComponent>();
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
-            using(ownerEntity.entityComponents.StabilizationLocker.WriteLock())
+            using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
                     this.AssertDbWriteGate();
@@ -714,115 +1105,13 @@ namespace AECC.Core.BuiltInTypes.Components
 
         #endregion
 
+        // ФАЗА 7, слайс 2: тела Serialize/Unserialize/AfterDeserializeDB перенесены
+        // ДОСЛОВНО в DbSerialization (owner-параметр — механика SerializationShadow
+        // фазы 4). Шеллы держат virtual-диспатч и публичный API; retry/NonEO/dead-letter
+        // (фикс №22) — у владельца логики.
         public override void SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
         {
-            Dictionary<IECSObjectPathContainer, List<dbRow>> newSerializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
-            // Стабильность DB на время сериализации обеспечивается внешним ReadLock
-            // (EntityNetSerializer.SlicedSerialize) + однопоточным контрактом DB-компонента.
-            {
-                serializedDB.Clear();
-                List<long> errorChanged = new List<long>();
-                
-                if (LoggingLevel >= DBLoggingLevel.CountOnly)
-                {
-                    NLogger.Log($"[DB SerializeDB] Starting serialization (OnlyChanged: {serializeOnlyChanged}, ClearChanged: {clearChanged})");
-                }
-                
-                if (serializeOnlyChanged)
-                {
-                    Dictionary<long, List<dbRow>> serializedComp = new Dictionary<long, List<dbRow>>();
-                    Dictionary<IECSObjectPathContainer, List<dbRow>> serializedCompPath = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
-
-                    foreach (var changedComponent in ChangedComponents)
-                    {
-                        try
-                        {
-                            var ownerId = ComponentOwners[changedComponent.Key];
-                            var component = DB[ownerId][changedComponent.Key];
-
-                            List<dbRow> components = null;
-                            serializedComp.TryGetValue(ownerId, out components);
-                            if (components == null)
-                                components = new List<dbRow>();
-                            component.Item1.EnterToSerialization();
-                            components.Add(new dbRow()
-                            {
-                                component = component.Item1,
-                                componentInstanceId = component.Item1.instanceId,
-                                componentId = component.Item1.GetId(),
-                                componentState = component.Item2
-                            });
-                            serializedComp[ownerId] = components;
-                            serializedCompPath[this.OwnerPaths[ownerId]] = components;
-                        }
-                        catch (Exception ex)
-                        {
-                            errorChanged.Add(changedComponent.Key);
-                        }
-                    }
-                    newSerializedDB = serializedCompPath;
-                }
-                else
-                {
-                    foreach (var entityRow in DB)
-                    {
-                        if (entityRow.Value == null)
-                            continue;
-                        List<dbRow> components = new List<dbRow>();
-                        var entityRowValues = entityRow.Value.Values.ToList();
-                        for (int i = 0; i < entityRowValues.Count; i++)
-                        {
-                            var ecsComponent = entityRowValues[i];
-                            ecsComponent.Item1.EnterToSerialization();
-                            components.Add(new dbRow()
-                            {
-                                component = ecsComponent.Item1,
-                                componentInstanceId = ecsComponent.Item1.instanceId,
-                                componentId = ecsComponent.Item1.GetId(),
-                                componentState = ecsComponent.Item2
-                            });
-
-                        }
-                        newSerializedDB[this.OwnerPaths[entityRow.Key]] = components;
-                    }
-                }
-                
-                if (LoggingLevel >= DBLoggingLevel.CountOnly)
-                {
-                    NLogger.Log($"[DB SerializeDB] Serialized {newSerializedDB.Count} owners, {errorChanged.Count} errors");
-                }
-                
-                if (clearChanged)
-                    ChangedComponents.Clear();
-                errorChanged.ForEach(x => ChangedComponents[x] = 1);
-
-                serializedDB = newSerializedDB;
-            }
-            if (LoggingLevel >= DBLoggingLevel.CountOnly)
-            {
-                var elementsOwners = new StringBuilder();
-                foreach (var serializedRow in newSerializedDB)
-                {
-                    elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
-                    foreach (var dbrow in serializedRow.Value)
-                    {
-                        elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
-                    }
-                    elementsOwners.AppendLine("}");
-                }
-
-                var elementsOwnersEO = new StringBuilder();
-                foreach (var serializedRow in serializedDBNonEO)
-                {
-                    elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
-                    foreach (var dbrow in serializedRow.Value.Item1)
-                    {
-                        elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
-                    }
-                    elementsOwners.AppendLine("}");
-                }
-                NLogger.Log($"[DB UnserializeDB] Starting deserialization of {newSerializedDB.Count} owners with elements:\n {elementsOwners} \n AND HAS NullEntityOwner:\n {elementsOwnersEO}");
-            }
+            Serial.SerializeDB(this, serializeOnlyChanged, clearChanged);
         }
 
         public override void AfterSerializationDB(bool clearAfterSerializaion = true)
@@ -864,231 +1153,19 @@ namespace AECC.Core.BuiltInTypes.Components
             }
         }
 
-        [System.NonSerialized]
-        private int unserializeCheckCount = 0;
-        
-        [System.NonSerialized]
-        public DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)> serializedDBNonEO = new DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)>();
+        private int unserializeCheckCount { get { return Serial.UnserializeCheckCount; } set { Serial.UnserializeCheckCount = value; } }
+
+        [IgnoreDataMember]
+        public DictionaryWrapper<IECSObjectPathContainer, (List<dbRow>, int)> serializedDBNonEO { get { return Serial.NonEO; } set { Serial.NonEO = value; } }
 
         public override void UnserializeDB(bool retryNullEntityOwner = false)
         {
-            _unserializeDepth++;
-            try
-            {
-            lock (serializedDB)
-            {
-                if (LoggingLevel >= DBLoggingLevel.CountOnly)
-                {
-                    var elementsOwners = new StringBuilder();
-                    foreach (var serializedRow in serializedDB)
-                    {
-                        elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
-                        foreach (var dbrow in serializedRow.Value)
-                        {
-                            elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
-                        }
-                        elementsOwners.AppendLine("}");
-                    }
-
-                    var elementsOwnersEO = new StringBuilder();
-                    foreach (var serializedRow in serializedDBNonEO)
-                    {
-                        elementsOwners.AppendLine($"{serializedRow.Key.serializableInstanceId} " + "{");
-                        foreach (var dbrow in serializedRow.Value.Item1)
-                        {
-                            elementsOwners.AppendLine($"        {dbrow.componentId}++{dbrow.componentInstanceId}++{dbrow.componentState}, ");
-                        }
-                        elementsOwners.AppendLine("}");
-                    }
-                    NLogger.Log($"[DB UnserializeDB] Starting deserialization of {serializedDB.Count} owners with elements:\n {elementsOwners} \n AND HAS NullEntityOwner:\n {elementsOwnersEO}");
-                }
-
-                if (retryNullEntityOwner)
-                {
-                    serializedDBNonEO.ForEach(x => serializedDB[x.Key] = x.Value.Item1);
-
-                    foreach (var serializedRow in serializedDB)
-                    {
-                        Dictionary<long, (ECSComponent, ComponentState)> components = new Dictionary<long, (ECSComponent, ComponentState)>();
-                        DB.TryGetValue(serializedRow.Key.CacheInstanceId, out components);
-                        if (components == null)
-                            components = new Dictionary<long, (ECSComponent, ComponentState)>();
-                        IECSObject entityOwner = serializedRow.Key.ECSObject;
-                        if (entityOwner == null)
-                        {
-                            if (!serializedDBNonEO.ContainsKey(serializedRow.Key))
-                            {
-                                serializedDBNonEO[serializedRow.Key] = (serializedRow.Value, 0);
-                            }
-
-                            if (serializedDBNonEO[serializedRow.Key].Item2 >= 10)
-                            {
-                                NLogger.Log("client: error unserialize: no entity");
-                                var lostInstanceId = serializedRow.Key.serializableInstanceId;
-                                if (DB.ContainsKey(lostInstanceId))
-                                {
-                                    this.RemoveComponentsByOwner(lostInstanceId);
-                                }
-                                NLogger.Log("lost components destroyed");
-                                serializedDBNonEO.Remove(serializedRow.Key);
-                                continue;
-                            }
-
-                            serializedDBNonEO[serializedRow.Key] = (serializedRow.Value, serializedDBNonEO[serializedRow.Key].Item2 + 1);
-
-                        }
-                        else
-                        {
-                            if (serializedDBNonEO.ContainsKey(serializedRow.Key))
-                            {
-                                serializedDBNonEO.Remove(serializedRow.Key);
-                            }
-                        }
-                    }
-                    if (serializedDBNonEO.Count > 0)
-                    {
-                        serializedDBNonEO.ForEach(x => serializedDB.Remove(x.Key));
-                        serializedDBNonEO.Where(x => x.Value.Item2 > 10).ToList().ForEach(x => serializedDBNonEO.Remove(x.Key));
-
-                        // Событийная замена ретрай-таймера: повторить при приходе недостающей
-                        // сущности-владельца. Cap (10) и dead-letter (RemoveComponentsByOwner)
-                        // остаются в блоке retryNullEntityOwner выше и срабатывают на сливах.
-                        var registry = this.ECSWorldOwner?.entityManager?.PendingDeserialization;
-                        if (registry != null)
-                        {
-                            registry.Register(this, () => UnserializeDB(true));
-                            // register-then-recheck: владелец мог прийти во время обработки до регистрации.
-                            if (serializedDBNonEO.Any(x => x.Key.ECSObject != null))
-                                TaskEx.RunAsync(() => UnserializeDB(true));
-                        }
-                    }
-                    else
-                    {
-                        this.ECSWorldOwner?.entityManager?.PendingDeserialization.Unregister(this);
-                    }
-                }
-
-                ChangedComponents.Clear();
-                int addedCount = 0;
-                int updatedCount = 0;
-
-                foreach (var serializedRow in serializedDB)
-                {
-                    Dictionary<long, (ECSComponent, ComponentState)> components = new Dictionary<long, (ECSComponent, ComponentState)>();
-                    DB.TryGetValue(serializedRow.Key.CacheInstanceId, out components);
-                    if (components == null)
-                        components = new Dictionary<long, (ECSComponent, ComponentState)>();
-                    IECSObject entityOwner = serializedRow.Key.ECSObject;
-                    if (entityOwner != null)
-                    {
-                        foreach (var component in serializedRow.Value)
-                        {
-                            var unserComp = (ECSComponent)ReflectionCopy.MakeReverseShallowCopy(component.component);
-                            component.componentInstanceId = unserComp.instanceId;
-                            if (!OwnerPaths.ContainsKey(entityOwner.instanceId))
-                            {
-                                OwnerPaths[entityOwner.instanceId] = new IECSObjectPathContainer(this.ECSWorldOwnerId, true) { ECSObject = entityOwner };
-                            }
-                            if (entityOwner is ECSEntity eCSEntity)
-                            {
-                                unserComp.ownerEntity = eCSEntity;
-                            }
-                            else if (entityOwner is ECSComponent eCSComponent)
-                            {
-                                unserComp.ownerEntity = eCSComponent.ownerEntity;
-                            }
-                            unserComp.ownerDB = this;
-                            if (!components.ContainsKey(unserComp.instanceId))
-                            {
-                                components[unserComp.instanceId] = (unserComp, component.componentState);
-                                ComponentOwners[unserComp.instanceId] = entityOwner.instanceId;
-                                unserComp.AfterDeserialization();
-                                // Реакции эмитятся единожды в AfterDeserializeDB по componentState
-                                // (Created→Added, Changed→Change, Removed→Removing). Здесь только
-                                // материализация компонента в DB — без дублирующей AddedReaction,
-                                // которая раньше давала двойную реакцию для Changed и "мигание"
-                                // (Added→Removing) для Removed.
-                                addedCount++;
-                            }
-                            else
-                            {
-                                //unserComp.componentManagers = components[unserComp.instanceId].Item1.componentManagers;
-                                components[unserComp.instanceId] = (unserComp, component.componentState);
-                                unserComp.AfterDeserialization();
-                                updatedCount++;
-                            }
-                            ChangedComponents[unserComp.instanceId] = 1;
-                        }
-                        DB[serializedRow.Key.CacheInstanceId] = components;
-                    }
-                    else
-                    {
-                        NLogger.Error("error unserialize: no entity");
-                    }
-                }
-
-                if (LoggingLevel >= DBLoggingLevel.CountOnly)
-                {
-                    NLogger.Log($"[DB UnserializeDB] Deserialized - Added: {addedCount}, Updated: {updatedCount}");
-                }
-
-                AfterDeserializeDB();
-                serializedDB.Clear();
-            }
-            }
-            finally
-            {
-                _unserializeDepth--;
-            }
+            Serial.UnserializeDB(this, retryNullEntityOwner);
         }
 
         public override void AfterDeserializeDB()
         {
-            int createdCount = 0;
-            int changedCount = 0;
-            int removedCount = 0;
-            
-            foreach (var entityRow in serializedDB)
-            {
-                var entityRowValues = entityRow.Value.ToList();
-                for (int i = 0; i < entityRowValues.Count; i++)
-                {
-                    var ownerList = DB[entityRow.Key.CacheInstanceId];
-                    if (entityRowValues[i].componentState == ComponentState.Removed && !ownerList.ContainsKey(entityRowValues[i].componentInstanceId))
-                    {
-                        NLogger.LogErrorDB("remove db component duplicate");
-                        continue;
-                    }
-                    var ecsComponent = ownerList[entityRowValues[i].componentInstanceId];
-                    if (ecsComponent.Item2 == ComponentState.Created)
-                    {
-                        ecsComponent.Item1.AddedReaction(ecsComponent.Item1.ownerEntity);
-                        createdCount++;
-                    }
-                    if (ecsComponent.Item2 == ComponentState.Changed)
-                    {
-                        //ecsComponent.Item1.OnAdded(ecsComponent.Item1.ownerEntity);
-                        TaskEx.RunAsync(() =>
-                        {
-                            ecsComponent.Item1.ChangeReaction(ecsComponent.Item1.ownerEntity);
-                        });
-                        changedCount++;
-                    }
-                    if (ecsComponent.Item2 == ComponentState.Removed)
-                    {
-                        ecsComponent.Item1.RemovingReaction(ecsComponent.Item1.ownerEntity);
-                        ownerList.Remove(ecsComponent.Item1.instanceId);
-                        ComponentOwners.Remove(ecsComponent.Item1.instanceId);
-                        removedCount++;
-                    }
-                }
-            }
-            
-            if (LoggingLevel >= DBLoggingLevel.CountOnly)
-            {
-                NLogger.Log($"[DB AfterDeserializeDB] Processed - Created: {createdCount}, Changed: {changedCount}, Removed: {removedCount}");
-                LogDBState("AfterDeserializeDB Complete");
-            }
+            Serial.AfterDeserializeDB(this);
         }
     }
 }

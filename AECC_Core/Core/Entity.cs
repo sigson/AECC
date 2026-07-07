@@ -1,5 +1,5 @@
-﻿
-using AECC.Extensions;
+﻿using AECC.Extensions;
+using System.Runtime.Serialization;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -7,12 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Concurrent;
-using AECC.Extensions;
 using AECC.Core.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.IO;
 using AECC.Collections;
 
@@ -37,17 +32,36 @@ namespace AECC.Core
         public string Name;
         [System.NonSerialized]
         public string serializedEntity;
+        /// <summary>Opaque-слот сериализационного состояния (фаза 4, ТЗ 4.7): модель ХРАНИТ,
+        /// не интерпретирует — внутри живёт AECC.Core.Serialization.EntitySerializationState
+        /// (dirty-set, зеркало, removed, bin/empty). Слот вместо внешней таблицы: без лукапа
+        /// и контенции на каждом чейндже.</summary>
         [System.NonSerialized]
-        public byte[] binSerializedEntity;
-        [System.NonSerialized]
-        public bool emptySerialized = true;
+        [IgnoreDataMember]
+        public object serializationState;
+
+        // Бывшие поля — форвардинг в состояние (владение у Serialization; внешние касания,
+        // включая GDAP-фильтр и сетку, работают без изменений).
+        [IgnoreDataMember]
+        public byte[] binSerializedEntity
+        {
+            get { return AECC.Core.Serialization.EntitySerializationState.Of(this).BinSerializedEntity; }
+            set { AECC.Core.Serialization.EntitySerializationState.Of(this).BinSerializedEntity = value; }
+        }
+
+        [IgnoreDataMember]
+        public bool emptySerialized
+        {
+            get { return AECC.Core.Serialization.EntitySerializationState.Of(this).EmptySerialized; }
+            set { AECC.Core.Serialization.EntitySerializationState.Of(this).EmptySerialized = value; }
+        }
         [System.NonSerialized]
         public bool Alive = false;
 
         public ECSEntity()
         {
             entityComponents = new EntityComponentStorage(this);
-            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
@@ -57,7 +71,7 @@ namespace AECC.Core
         public ECSEntity(long instanceid)
         {
             entityComponents = new EntityComponentStorage(this);
-            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
@@ -69,7 +83,7 @@ namespace AECC.Core
         {
             this.ECSWorldOwner = world;
             entityComponents = new EntityComponentStorage(this);
-            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
@@ -622,7 +636,7 @@ namespace AECC.Core
         {
             this.Alive = false;
             this.entityComponents.OnEntityDelete();
-            if((!Defines.CutClientServerCollections) || (this.ECSWorldOwner == null && !Defines.CutClientServerCollections) || (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 this.dataAccessPolicies.Clear();
                 this.fastEntityComponentsId.ClearI(this.SerialLocker);

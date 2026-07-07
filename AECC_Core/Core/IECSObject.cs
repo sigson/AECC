@@ -6,10 +6,6 @@ using System.Reflection;
 using System.Text;
 using System.Collections.Concurrent;
 using AECC.Extensions;
-using AECC.Core.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.IO;
 using System.Threading.Tasks;
 using AECC.Extensions.ThreadingSync;
@@ -29,8 +25,30 @@ namespace AECC.Core
 
         [System.NonSerialized]
         public object SerialLocker = new object();
+
+        /// <summary>ФАЗА 4, шаг 3 (ТЗ 4.4/4.7): opaque-слот пер-объектной сериализационной
+        /// тени — модель ХРАНИТ, не интерпретирует (внутри живёт
+        /// AECC.Core.Serialization.SerializationShadow: автомат NoData/Changed/Freezed +
+        /// retry-счётчик + логика Snapshot/Restore/AfterRestore). Слот вместо внешней
+        /// таблицы (анти-бомба 7.4). [NonSerialized] воспроизводит дословно прежний сброс
+        /// у десериализованного инстанса: ChangesState → NoData, deserializeErrorCount → 0.</summary>
         [System.NonSerialized]
-        public IECSObjectSerializedStateMode ChangesState = IECSObjectSerializedStateMode.NoData;
+        [IgnoreDataMember]
+        public object serializationShadow;
+
+        // Бывшее [NonSerialized]-поле — форвардинг в тень (владение у Serialization;
+        // внешние касания, включая сетку 9(г), работают без изменений).
+        [IgnoreDataMember]
+        public IECSObjectSerializedStateMode ChangesState
+        {
+            get { return SerializationShadow.Of(this).ChangesState; }
+            set { SerializationShadow.Of(this).ChangesState = value; }
+        }
+
+        // WIRE-поле протокола: «отправитель материализовал свежее зеркало детей».
+        // Остаётся сериализуемыми ДАННЫМИ модели (получатель читает его из пришедшего
+        // инстанса); интерпретация — только в SerializationShadow (сверено с ТЗ 4.4 /
+        // стратегией 3.4; см. эскалацию в журнале).
         public bool HasChildChanges = true; //after creation = yes
         public long ownerECSObjectId;
         public bool ChildDispose = false; //for db component may be true
@@ -74,6 +92,22 @@ namespace AECC.Core
             }
         }
         
+        /// <summary>Транзитный внутренний доступ пайплайна сериализации к живому словарю
+        /// детей (материализация зеркала в SnapshotPass, чистка лишних в RestorePass —
+        /// идея 1.4/1.6). При физическом выносе сборки Serialization (шаг 4 фазы 4) —
+        /// InternalsVisibleTo либо enumerate-поверхность; решить там.</summary>
+        internal LockedDictionarySlim<long, IECSObject> ChildrenForSerialization
+        {
+            get { return childECSObjects; }
+        }
+
+        /// <summary>Мост тени к пользовательскому хуку (хук остаётся protected-API модели,
+        /// вызывается сериализацией через shadow — ТЗ 4.4).</summary>
+        internal void RunAfterDeserializationImpl()
+        {
+            AfterDeserializationImpl();
+        }
+
         protected virtual void OnUpdateOwner(IECSObject newOwner)
         {
             
@@ -220,64 +254,9 @@ namespace AECC.Core
             
         }
 
-        private void SerializationProcess()
-        {
-            if(ChangesState == IECSObjectSerializedStateMode.Freezed)
-            {
-                ChangesState = IECSObjectSerializedStateMode.NoData;
-                HasChildChanges = false;
-            }
-            if(ChangesState == IECSObjectSerializedStateMode.Changed)
-            {
-                childECSObjectsId.Clear();
-                foreach (var childpair in childECSObjects)
-                {
-                    childECSObjectsId[childpair.Key] = new IECSObjectPathContainer(this.ECSWorldOwnerId, true){ECSObject = childpair.Value};
-                }
-                ChangesState = IECSObjectSerializedStateMode.Freezed;
-                HasChildChanges = true;
-            }
-        }
-
-        private bool DeserializationProcess(bool retryGetECSObjects = false)
-        {
-            var newchildECSObjects = new DictionaryWrapper<long, IECSObject>();
-
-            if (retryGetECSObjects)
-            {
-                foreach (var entry in childECSObjectsId)
-                {
-                    if (childECSObjects.ContainsKey(entry.Key))
-                        continue;
-
-                    if (entry.Value.ECSObject == null)
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            foreach (var entry in childECSObjectsId)
-            {
-                if (childECSObjects.ContainsKey(entry.Key))
-                    continue;
-
-                newchildECSObjects[entry.Key] = entry.Value.ECSObject;
-                if (entry.Value.ECSObject != null)
-                {
-                    this.AddChildObject(entry.Value.ECSObject);
-                }
-            }
-            foreach (var entry in childECSObjects)
-            {
-                if (!newchildECSObjects.ContainsKey(entry.Key))
-                {
-                    this.RemoveChildObject(entry.Key);
-                }
-            }
-
-            return true;
-        }
+        // ФАЗА 4, шаг 3 (ТЗ 4.4/4.7): тела SerializationProcess/DeserializationProcess
+        // выселены ДОСЛОВНО в AECC.Core.Serialization.SerializationShadow
+        // (SnapshotPass/RestorePass) — модель автомат инвалидации больше не интерпретирует.
 
         /// <summary>
         /// s
@@ -292,7 +271,7 @@ namespace AECC.Core
         /// </summary>
         public void EnterToSerialization()
         {
-            SerializationProcess();
+            SerializationShadow.Of(this).SnapshotPass(this);
             //lock(SerialLocker)
             {
                 EnterToSerializationImpl();
@@ -320,50 +299,12 @@ namespace AECC.Core
 
         }
 
-        [System.NonSerialized]
-        private int deserializeErrorCount = 0;
-
+        // ФАЗА 4, шаг 3: deserializeErrorCount и вся пост-десериализация (профильная
+        // ветка, событийный retry с register-then-recheck, cap+dead-letter — идея 1.8)
+        // выселены ДОСЛОВНО в SerializationShadow.AfterRestore.
         public void AfterDeserialization()
         {
-            if (this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server || this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Offline)
-            {
-                using (new SharedLock.Scope(SerialLocker))
-                {
-                    if (HasChildChanges)
-                        DeserializationProcess();
-                    AfterDeserializationImpl();
-                }
-            }
-            else
-            {
-                using (new SharedLock.Scope(SerialLocker))
-                {
-                    bool deserres = true;
-                    if (HasChildChanges)
-                        deserres = DeserializationProcess(true);
-                    if (!deserres)
-                    {
-                        var registry = this.ECSWorldOwner.entityManager.PendingDeserialization;
-                        if (deserializeErrorCount < 30)
-                        {
-                            deserializeErrorCount++;
-                            // Событийная замена ретрай-таймера: повторить при приходе недостающей сущности.
-                            registry.Register(this, () => AfterDeserialization());
-                            // register-then-recheck: сущность могла прийти между проверкой и регистрацией.
-                            if (!DeserializationProcess(true))
-                                return;
-                        }
-                        else
-                        {
-                            NLogger.Error("client: error deserialize");
-                            return;
-                        }
-                    }
-                    deserializeErrorCount = 0;
-                    this.ECSWorldOwner.entityManager.PendingDeserialization.Unregister(this);
-                    AfterDeserializationImpl();
-                }
-            }
+            SerializationShadow.Of(this).AfterRestore(this);
         }
         protected virtual void AfterDeserializationImpl()
         {

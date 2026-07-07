@@ -1,5 +1,4 @@
-﻿
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -8,11 +7,6 @@ using System.Threading.Tasks;
 using AECC.Core.Logging;
 using AECC.Extensions;
 using System.Collections.Concurrent;
-using AECC.Extensions;
-using AECC.Core.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.IO;
 using AECC.Core.BuiltInTypes.ComponentsGroup;
 
@@ -26,9 +20,10 @@ namespace AECC.Core
         public ECSComponentManager(ECSWorld world)
         {
             this.world = world;
-            if (this.world.WorldType == ECSWorld.WorldTypeEnum.Client)
+            // Профиль вместо WorldType-ифа (идея 1.15); прежний else-if исчерпывал все три вида.
+            if (this.world.Profile.ClientComponentGroups)
                 GlobalProgramComponentGroup = new ClientComponentGroup();
-            else if(this.world.WorldType == ECSWorld.WorldTypeEnum.Server || this.world.WorldType == ECSWorld.WorldTypeEnum.Offline )
+            else
                 GlobalProgramComponentGroup = new ServerComponentGroup();
         }
     }

@@ -76,19 +76,19 @@ namespace AECC.Core
             foreach (var sourceWorld in sourceWorlds)
             {
                 // --- Sync EntityStorage ---
-                var syncKeys = sourceWorld.entityManager.EntityStorage.Keys.ToList();
+                var syncKeys = sourceWorld.entityManager.Repository.Keys.ToList();
                 foreach (var entityId in syncKeys)
                 {
-                    if (!sourceWorld.entityManager.EntityStorage.TryGetValue(entityId, out var entity))
+                    if (!sourceWorld.entityManager.Repository.TryGetValue(entityId, out var entity))
                         continue;
 
-                    sourceWorld.entityManager.EntityStorage.UnsafeRemove(entityId, out _);
+                    sourceWorld.entityManager.Repository.UnsafeRemove(entityId, out _);
 
                     entity.ECSWorldOwner = targetWorld;
                     entity.manager = targetWorld.entityManager;
                     SquashUpdateComponentWorldReferences(entity, targetWorld);
 
-                    if (!targetWorld.entityManager.EntityStorage.UnsafeAdd(entityId, entity))
+                    if (!targetWorld.entityManager.Repository.UnsafeAdd(entityId, entity))
                     {
                         NLogger.Error($"SquashWorlds[OneThread]: не удалось добавить sync-сущность {entityId} ({entity.AliasName}) в целевой мир {targetWorld.instanceId}");
                         continue;
@@ -136,12 +136,12 @@ namespace AECC.Core
                 // === ФАЗА 1: Блокировки хранилищ сущностей ===
 
                 // 1.1. Target sync
-                allLockTokens.Add(targetWorld.entityManager.EntityStorage.LockStorage());
+                allLockTokens.Add(targetWorld.entityManager.Repository.LockStorage());
 
                 // 1.2. Source sync (по порядку instanceId)
                 foreach (var sourceWorld in sourceWorlds)
                 {
-                    allLockTokens.Add(sourceWorld.entityManager.EntityStorage.LockStorage());
+                    allLockTokens.Add(sourceWorld.entityManager.Repository.LockStorage());
                 }
 
                 // === ФАЗА 2: Сбор сущностей + блокировка компонентных хранилищ ===
@@ -151,11 +151,11 @@ namespace AECC.Core
                 foreach (var sourceWorld in sourceWorlds)
                 {
                     // --- Sync сущности ---
-                    var syncKeys = sourceWorld.entityManager.EntityStorage.Keys.ToList();
+                    var syncKeys = sourceWorld.entityManager.Repository.Keys.ToList();
                     syncKeys.Sort();
                     foreach (var entityId in syncKeys)
                     {
-                        if (!sourceWorld.entityManager.EntityStorage.TryGetValue(entityId, out var entity))
+                        if (!sourceWorld.entityManager.Repository.TryGetValue(entityId, out var entity))
                             continue;
 
                         LockEntityComponentStorages(entity, allLockTokens);
@@ -168,7 +168,7 @@ namespace AECC.Core
                 foreach (var (entity, sourceWorld, wasAsync) in collectedEntities)
                 {
                     // 3.1. Удаляем из исходного хранилища
-                    sourceWorld.entityManager.EntityStorage.UnsafeRemove(entity.instanceId, out _);
+                    sourceWorld.entityManager.Repository.UnsafeRemove(entity.instanceId, out _);
 
                     // 3.2. Обновляем мировые ссылки
                     entity.ECSWorldOwner = targetWorld;
@@ -176,7 +176,7 @@ namespace AECC.Core
                     SquashUpdateComponentWorldReferences(entity, targetWorld);
 
                     // 3.3. Вносим в целевое хранилище
-                    bool added = targetWorld.entityManager.EntityStorage.UnsafeAdd(entity.instanceId, entity);
+                    bool added = targetWorld.entityManager.Repository.UnsafeAdd(entity.instanceId, entity);
 
                     if (!added)
                     {

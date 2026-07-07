@@ -19,94 +19,103 @@ using System.Runtime.Serialization;
 namespace AECC.Core
 {
     [System.Serializable]
-    public partial class EntityComponentStorage
+    public partial class EntityComponentStorage : IComponentStoreListener
     {
-        private ECSEntity entity;
+        // internal: extension-пайплайн сериализации (уезжает в AECC.Serialization; IVT).
+        internal ECSEntity entity;
         public int ChangedComponent => changedComponents.Count;
         public bool isAsync => false; // PHASE 3a: async component storage retired (was allocating componentsAsync per entity)
 
-        // PHASE 2: per-entity component storage on LockedDictionarySlim keyed by the stable type
-        // UID (long, == component.GetId() == type.TypeId()). The heavyweight per-component
-        // ReaderWriterLockSlim is gone (the cell carries an inline `long` lock). HoldKeys is ON:
-        // absence-holds (HoldComponentAddition / ExecuteOnNotHasComponent) are part of the contract
-        // machinery. Public API still takes Type; Kid() maps Type->id at the boundary (attribute-
-        // based, registry-independent), so int->Type reverse lookups are never introduced.
-        private LockedDictionarySlim<long, ECSComponent> componentsValue;
-        private LockedDictionarySlim<long, ECSComponent> components
+        // ФАЗА 3, шаг 2 (ТЗ 4.5.1): словарь инкапсулирован в ComponentStore — «только
+        // хранение + транзакционная матрица + absence-holds»; ключ — стабильный type-uid
+        // (long, == component.GetId() == type.TypeId()), HoldKeys ВКЛЮЧЁН. Side-effects
+        // (зеркала сериализации, fastEntityComponentsId, manager-нотификации) исполняет
+        // слушатель IComponentStoreListener — переходно этот же класс (оркестратор зеркал
+        // до фазы 4; целевой слушатель — мир). Public API по-прежнему принимает Type;
+        // Kid() маппит Type->id на границе — обратных int->Type лукапов не появляется.
+        // Ленивость сохранена: момент фиксации ConcurrencyMode — первый доступ, как раньше.
+        private ComponentStore storeValue;
+        internal ComponentStore Store
         {
             get
             {
-                if (componentsValue == null)
+                if (storeValue == null)
                 {
-                    componentsValue = new LockedDictionarySlim<long, ECSComponent>(true);
+                    storeValue = new ComponentStore(AECC.Locking.KernelRuntime.DefaultMode, this);
                 }
-                return componentsValue;
-            }
-            set
-            {
-                componentsValue = value;
+                return storeValue;
             }
         }
 
         // Type -> stable type UID. Reads [TypeUid] via the same mechanism as ECSComponent.GetId()
         // (cached reflection), so it does NOT depend on the serializer's TypeStorage being populated.
-        private static long Kid(Type t) { return t.TypeId(); }
+        internal static long Kid(Type t) { return t.TypeId(); }
 
-        private readonly IDictionary<Type, int> changedComponents = new DictionaryWrapper<Type, int>();
-        public IDictionary<long, Type> IdToTypeComponentValue;
-        public IDictionary<long, Type> IdToTypeComponent
+        // ФАЗА 4, шаг 1 (ТЗ 4.7): dirty-set / зеркало / removed / bin / empty переехали во
+        // владение Serialization (EntitySerializationState в opaque-слоте сущности).
+        // Горячий путь (dirty-запись на каждый change) — через эту кэш-ссылку: по стоимости
+        // прежнее чтение поля. Пересадка на новую сущность — в RestoreComponentsAfterSerialization.
+        [System.NonSerialized]
+        private AECC.Core.Serialization.EntitySerializationState _serState;
+        private AECC.Core.Serialization.EntitySerializationState SerState
         {
             get
             {
-                if (IdToTypeComponentValue == null)
-                {
-                    IdToTypeComponentValue = new Dictionary<long, Type>();
-                }
-                return IdToTypeComponentValue;
-            }
-            set
-            {
-                IdToTypeComponentValue = value;
+                if (_serState == null)
+                    _serState = AECC.Core.Serialization.EntitySerializationState.Of(this.entity);
+                return _serState;
             }
         }
-        private LockedDictionarySlim<long, object> SerializationContainerValue;
+
+        internal IDictionary<Type, int> changedComponents { get { return SerState.ChangedComponents; } }
+
         public LockedDictionarySlim<long, object> SerializationContainer
         {
+            get { return SerState.SerializationContainer; }
+            set { SerState.SerializationContainer = value; }
+        }
+
+        [IgnoreDataMember]
+        public List<long> RemovedComponents
+        {
+            get { return SerState.RemovedComponents; }
+            set { SerState.RemovedComponents = value; }
+        }
+        [System.NonSerialized]
+        private RWLock stabilizationGateValue;
+
+        /// <summary>
+        /// Entity-wide СТАБИЛИЗАЦИОННЫЙ ГЕЙТ (переименован из StabilizationLocker, ТЗ 4.5.1):
+        /// RW-барьер уровня сущности, под write-стороной которого выполняются мутации
+        /// DB-агрегатора, а под read-стороной — сериализация среза сущности. Настоящие
+        /// потребители — ровно два: сериализация (EntityNetSerializer) и DBComponent
+        /// (единый авторитет синхронизации DB, идея 1.12). Это НЕ лок словаря компонентов —
+        /// у слотов свои инлайновые ячейки.
+        /// </summary>
+        [IgnoreDataMember]
+        public RWLock StabilizationGate
+        {
             get
             {
-                if (SerializationContainerValue == null)
+                if (stabilizationGateValue == null)
                 {
-                    SerializationContainerValue = new LockedDictionarySlim<long, object>();
+                    stabilizationGateValue = new RWLock();
                 }
-                return SerializationContainerValue;
+                return stabilizationGateValue;
             }
             set
             {
-                SerializationContainerValue = value;
+                stabilizationGateValue = value;
             }
         }
 
-        public List<long> RemovedComponents = new List<long>();
-        [System.NonSerialized]
-        public RWLock StabilizationLockerValue;
+        [Obsolete("Фаза 3 (ТЗ 4.5.1): переименовано в StabilizationGate — entity-wide стабилизационный гейт")]
         [IgnoreDataMember]
         public RWLock StabilizationLocker
         {
-            get
-            {
-                if (StabilizationLockerValue == null)
-                {
-                    StabilizationLockerValue = new RWLock();
-                }
-                return StabilizationLockerValue;
-            }
-            set
-            {
-                StabilizationLockerValue = value;
-            }
+            get { return StabilizationGate; }
+            set { StabilizationGate = value; }
         }
-
-        private bool IdToTypeMode = false; // only for debug reason
 
         public EntityComponentStorage(ECSEntity entity)
         {
@@ -115,154 +124,33 @@ namespace AECC.Core
 
         #region serialization
 
-        public Dictionary<long, byte[]> SlicedSerializeStorage(ISerializationAdapter serializationAdapter, bool serializeOnlyChanged, bool clearChanged)
-        {
-            if (serializeOnlyChanged)
-            {
-                //using (this.StabilizationLocker.ReadLock())//lock (this.serializationLocker)
-                {
-                    DictionaryWrapper<Type, ECSComponent> serializedContainer = new DictionaryWrapper<Type, ECSComponent>();
-                    Dictionary<long, byte[]> slicedComponents = new Dictionary<long, byte[]>();
-                    var cachedChangedComponents = changedComponents.Keys.ToList();
-                    List<Type> errorList = new List<Type>();
-                    foreach (var changedComponent in cachedChangedComponents)
-                    {
-                        if (Defines.LogECSEntitySerializationComponents)
-                        {
-                            NLogger.Log($"Will serialized changed component {changedComponent} in {this.entity.AliasName}:{this.entity.instanceId}");
-                        }
-                        components.ExecuteReadLocked(Kid(changedComponent), (key, component) =>
-                        {
-                            using (MemoryStream writer = new MemoryStream())
-                            {
-                                var pairComponent = new KeyValuePair<long, ECSComponent>(component.GetId(), component);
-                                //var component = pairComponent.Value;
-                                byte[] serializedData = null;
-                                lock (component.SerialLocker)
-                                {
-                                    component.EnterToSerialization();
-
-                                    DBComponent dBComponent = null;
-
-                                    if (component is DBComponent)
-                                    {
-                                        dBComponent = (component as DBComponent);
-                                    }
-                                    if (dBComponent != null)
-                                    {
-                                        dBComponent.SerializeDB(serializeOnlyChanged, clearChanged);
-                                    }
-
-                                    //NetSerializer.Serializer.Default.Serialize(writer, component);
-                                    serializedData = serializationAdapter.SerializeECSComponent(component);
-
-                                    if (dBComponent != null)
-                                    {
-                                        dBComponent.AfterSerializationDB(clearChanged);
-                                    }
-                                    component.AfterSerialization();
-                                }
-                                slicedComponents[pairComponent.Key] = serializedData;//writer.ToArray();
-                                if (clearChanged)
-                                    changedComponents.Remove(component.GetTypeFast(), out _);
-                            }
-                        });
-                    }
-                    return slicedComponents;
-                }
-            }
-            else
-            {
-                //using (this.StabilizationLocker.ReadLock())//lock (this.serializationLocker)
-                {
-                    Dictionary<long, byte[]> slicedComponents = new Dictionary<long, byte[]>();
-                    var cacheSerializationContainerKeys = SerializationContainer.Keys.ToList();
-                    foreach (var pairComponentKey in cacheSerializationContainerKeys)
-                    {
-                        SerializationContainer.ExecuteReadLocked(pairComponentKey, (key, pairComponent) => { 
-                            using (MemoryStream writer = new MemoryStream())
-                            {
-                                if (!(pairComponent as ECSComponent).Unregistered)
-                                {
-                                    DBComponent dbComp = null;
-
-                                    if (Defines.LogECSEntitySerializationComponents)
-                                    {
-                                        NLogger.Log($"Will serialized component {pairComponent.GetType()} in {this.entity.AliasName}:{this.entity.instanceId}");
-                                    }
-
-                                    if (pairComponent is DBComponent)
-                                    {
-                                        dbComp = (pairComponent as DBComponent);
-                                        dbComp.SerializeDB(serializeOnlyChanged, clearChanged);
-                                    }
-
-                                    //NetSerializer.Serializer.Default.Serialize(writer, pairComponent);
-                                    var serializedData = serializationAdapter.SerializeECSComponent((pairComponent as ECSComponent));
-
-                                    slicedComponents[pairComponentKey] = serializedData;//writer.ToArray();
-                                    if (dbComp != null)
-                                    {
-                                        dbComp.AfterSerializationDB(clearChanged);
-                                    }
-                                    if (clearChanged)
-                                        changedComponents.Remove((pairComponent as ECSComponent).GetTypeFast(), out _);
-                                }
-                            }
-                            });
-                    }
-                    return slicedComponents;
-                }
-                return null;
-            }
-        }
-
-        public Dictionary<long, byte[]> SerializeStorage(ISerializationAdapter serializationAdapter, bool serializeOnlyChanged, bool clearChanged) // OBSOLETE
-        {
-            Dictionary<long, byte[]> serializeContainer = new Dictionary<long, byte[]>();
-            if (serializeOnlyChanged)
-            {
-                foreach (var changedComponent in changedComponents)
-                {
-                    var component = components[Kid(changedComponent.Key)];
-                    if (Defines.LogECSEntitySerializationComponents)
-                    {
-                        NLogger.Log($"Will serialized component {component.GetType()} in {this.entity.AliasName}:{this.entity.instanceId}");
-                    }
-                    serializeContainer[component.GetId()] = serializationAdapter.SerializeECSComponent(component);
-                }
-            }
-            else
-            {
-                foreach (var changedComponent in SerializationContainer)
-                {
-                    serializeContainer[changedComponent.Key] = serializationAdapter.SerializeECSComponent(changedComponent.Value as ECSComponent);
-                }
-            }
-            if (clearChanged)
-                changedComponents.Clear();
-            return serializeContainer;
-        }
-
-        public void DeserializeStorage(ISerializationAdapter serializationAdapter, Dictionary<long, byte[]> serializedComponents)
-        {
-            foreach (var serComponent in serializedComponents)
-            {
-                this.SerializationContainer[serComponent.Key] = (ECSComponent)serializationAdapter.DeserializeECSComponent(serComponent.Value, serComponent.Key);
-            }
-        }
+        // ФАЗА 4, вынос сборок (ТЗ 4.7, breaking): SlicedSerializeStorage / SerializeStorage /
+        // DeserializeStorage — «внутренние методы Serialization» — извлечены ДОСЛОВНО в
+        // extension-класс EntityComponentStorageSerialization (файл уезжает в сборку
+        // AECC.Serialization; вызовы сохраняют синтаксис через using). Здесь остались только
+        // адаптер-независимые части пайплайна: RestoreComponentsAfterSerialization и
+        // FilterRemovedComponents (компайл-чисты; владение модулем мигрирует позже).
 
         public void RestoreComponentsAfterSerialization(ECSEntity entity)
         {
+            // Пересадка владельца: state НОСИТЕЛЯ кладётся в слот НОВОЙ сущности
+            // (данные принадлежат сущности; десериализованный носитель отдаёт их ей).
+            // ВАЖЕН ПОРЯДОК: state резолвится ДО переключения this.entity — иначе ленивый
+            // SerState-геттер (при холодном кэше) создал бы СВЕЖИЙ state уже на целевой
+            // сущности, молча теряя dirty/removed/зеркало носителя. Дефект шага 1, пойман
+            // первым реальным прогоном сетки (тест «пересадка state» ранее не запускался).
+            var st = SerState;   // state носителя (this.entity ещё старый)
             this.entity = entity;
-            if (components.Count == 0)
+            entity.serializationState = st;
+            _serState = st;
+            if (Store.Count == 0)
             {
                 List<ECSComponent> afterDeser = new List<ECSComponent>();
                 foreach (var objPair in SerializationContainer)
                 {
                     ECSComponent objComponent = (ECSComponent)objPair.Value;
                     Type component;
-                    if (EntitySerializer.TypeStorage.TryGetValue(objPair.Key, out component))
+                    if (TypeRegistry.Global.TryGetType(objPair.Key, out component))
                     {
                         var typedComponent = (ECSComponent)Convert.ChangeType(objPair.Value, component);
                         
@@ -272,20 +160,13 @@ namespace AECC.Core
                 }
                 afterDeser.ForEach(typedComponent =>
                 {
-                    if (typedComponent is DBComponent)
+                    // Фаза 4, шаг 2 (ТЗ 4.7): AfterRestore участника; clientRetry — из профиля
+                    // (событийный ретрай клиентской ветки, идея 1.8). Семантика дословно прежняя:
+                    // UnserializeDB(retryNullEntityOwner = ClientRetryOnMissingRefs).
+                    var participant = typedComponent as AECC.Abstractions.ISerializationParticipant;
+                    if (participant != null)
                     {
-                        //TaskEx.RunAsync(() =>
-                        //{
-                        
-                            if (this.entity.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Server || this.entity.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Offline)
-                            {
-                                (typedComponent as DBComponent).UnserializeDB();
-                            }
-                            else
-                            {
-                                (typedComponent as DBComponent).UnserializeDB(true);
-                            }
-                        //});
+                        participant.AfterRestore(this.entity.ECSWorldOwner.Profile.ClientRetryOnMissingRefs);
                     }
                     typedComponent.AfterDeserialization();
                 });
@@ -298,7 +179,7 @@ namespace AECC.Core
         public bool CheckChanged(Type typeComponent) => changedComponents.Keys.Contains(typeComponent);
         public void DirectiveChange(Type typeComponent)
         {
-            components.ExecuteReadLocked(Kid(typeComponent), (key, component) =>
+            Store.ExecuteReadLocked(Kid(typeComponent), (key, component) =>
             {
                 changedComponents[typeComponent] = 1;
             });
@@ -308,27 +189,16 @@ namespace AECC.Core
 
         public bool AddOrChangeComponentImmediately(Type comType, ECSComponent component, bool restoringMode = false, bool silent = false)
         {
-            bool added = false;
-            bool changed = false;
-            components.ExecuteOnAddOrChangeLocked(Kid(comType), component, (key, newcomponent) => {
-                AddComponentProcess(comType, newcomponent, restoringMode);
-                    added = true;
-            }, (key, newcomponent, oldcomponent) => {
-                changed = ChangeComponentProcess(newcomponent, oldcomponent, silent, restoringMode ? this.entity : null);
-                if (restoringMode)
-				{
-					if (newcomponent is DBComponent dBComponent)
-                    {
-                        this.components.UnsafeChange(key, oldcomponent);
-                        (oldcomponent as DBComponent).serializedDB = (newcomponent as DBComponent).serializedDB;
-                    }
-				}
-            });
+            bool added;
+            bool changedBranch;
+            Store.AddOrChange(Kid(comType), component, restoringMode, silent, restoringMode ? this.entity : null, out added, out changedBranch);
+            // исход dirty прежний: change-ветка помечает только при !silent (см. ComponentChanged)
+            bool changed = changedBranch && !silent;
             if (added)
             {
                 if (!silent)
                 {
-                    components.ExecuteReadLocked(Kid(comType), (key, addedcomponent) =>
+                    Store.ExecuteReadLocked(Kid(comType), (key, addedcomponent) =>
                     {
                         if (component.ECSWorldOwner != null)
                         {
@@ -351,20 +221,12 @@ namespace AECC.Core
 
         public bool AddComponentImmediately(Type comType, ECSComponent component, bool restoringMode = false, bool silent = false)
         {
-            bool added = false;
-            if (!this.components.ContainsKey(Kid(comType)))
-            {
-                components.ExecuteOnAddLocked(Kid(comType), component, (key, newcomponent) =>
-                {
-                    AddComponentProcess(comType, newcomponent, restoringMode);
-                    added = true;
-                });
-            }
+            bool added = Store.Add(Kid(comType), component, restoringMode);
             if (added)
             {
                 if (!silent)
                 {
-                    components.ExecuteReadLocked(Kid(comType), (key, addedcomponent) =>
+                    Store.ExecuteReadLocked(Kid(comType), (key, addedcomponent) =>
                     {
                         if (component.ECSWorldOwner != null)
                         {
@@ -379,13 +241,15 @@ namespace AECC.Core
             return added;
         }
 
-        private void AddComponentProcess(Type comType, ECSComponent component, bool restoringMode = false)
+        /// <summary>IComponentStoreListener: под write-локом ячейки, после мутации словаря
+        /// (бывш. AddComponentProcess, тело дословное).</summary>
+        public void ComponentAdded(long typeUid, ECSComponent component, bool restoringMode)
         {
             component.ownerEntity = this.entity;
             component.ECSWorldOwner = this.entity?.ECSWorldOwner;
             if (this.entity != null)
             {
-                if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+                if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
                 {
                     this.entity.fastEntityComponentsId.AddI(component.instanceId, 0, this.entity.SerialLocker);
                 }
@@ -395,26 +259,19 @@ namespace AECC.Core
                 NLogger.LogError("null owner entity");
             }
 
-            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 if (restoringMode)
                     this.SerializationContainer.TryAdd(component.GetId(), component);
                 else
                     this.SerializationContainer[component.GetId()] = component;
             }
-            if(IdToTypeMode)
-                this.IdToTypeComponent.TryAdd(component.GetId(), component.GetTypeFast());
             component.ECSWorldOwner?.entityManager.OnAddComponent(this.entity, component);
         }
 
         public bool ChangeComponent(ECSComponent component, bool silent = false, ECSEntity restoringOwner = null)
         {
-            bool changed = false;
-            components.ExecuteOnChangeLocked(component.GetId(), component, (key, chcomponent, oldcomponent) =>
-                {
-                    changed = ChangeComponentProcess(chcomponent,oldcomponent, silent, restoringOwner);
-                }
-            );
+            bool changed = Store.Change(component.GetId(), component, silent, restoringOwner) && !silent;
             if (!silent && changed)
             {
                 component.ChangeReaction(this.entity);
@@ -422,9 +279,10 @@ namespace AECC.Core
             return changed;
         }
 
-        private bool ChangeComponentProcess(ECSComponent component, ECSComponent oldcomponent, bool silent = false, ECSEntity restoringOwner = null)
+        /// <summary>IComponentStoreListener: под write-локом ячейки (бывш. ChangeComponentProcess,
+        /// тело дословное + сохранённая restoring-DB-ветка из бывшего AddOrChange-транзакта).</summary>
+        public void ComponentChanged(long typeUid, ECSComponent component, ECSComponent oldcomponent, bool silent, ECSEntity restoringOwner, bool restoringMode)
         {
-            bool changed = false;
             if (restoringOwner != null)
                 component.ownerEntity = restoringOwner;
             if(component.ECSWorldOwner != null)
@@ -434,9 +292,28 @@ namespace AECC.Core
             {
                 Type componentClass = component.GetTypeFast();
                 changedComponents[componentClass] = 1;
-                changed = true;
             }
-            return changed;
+            if (restoringMode)
+            {
+                // Дословно прежняя ветка restoring-режима AddOrChange: DB-агрегатор при
+                // восстановлении сохраняет старый инстанс, перенимая только serializedDB.
+                if (component is DBComponent dBComponent)
+                {
+                    Store.UnsafeChange(typeUid, oldcomponent); // под удержанным ячеечным локом, как раньше
+                    (oldcomponent as DBComponent).serializedDB = (component as DBComponent).serializedDB;
+                }
+            }
+        }
+
+        /// <summary>IComponentStoreListener: пометка без замены значения (бывш. тело
+        /// MarkComponentChanged-транзакта). Сольётся с ComponentChanged в фазе 4.</summary>
+        public void ComponentMarkedChanged(long typeUid, ECSComponent component, bool serializationSilent)
+        {
+            Type componentClass = component.GetTypeFast();
+            if (!serializationSilent)
+            {
+                changedComponents[componentClass] = 1;
+            }
         }
 
         public ECSComponent GetComponent(Type componentClass)
@@ -444,7 +321,7 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                component = this.components[Kid(componentClass)];
+                component = this.Store.GetOrThrow(Kid(componentClass));
             }
             catch (Exception ex)
             {
@@ -459,7 +336,7 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                component = this.components.FirstOrDefault(x => componentClass.IsInstanceOfType(x.Value)).Value;
+                component = this.Store.FirstOrDefault(x => componentClass.IsInstanceOfType(x.Value)).Value;
             }
             catch (Exception ex)
             {
@@ -474,7 +351,7 @@ namespace AECC.Core
             IEnumerable<ECSComponent> component = null;
             try
             {
-                component = this.components.Where(x => componentClass.IsInstanceOfType(x.Value)).Select(x => x.Value);
+                component = this.Store.Where(x => componentClass.IsInstanceOfType(x.Value)).Select(x => x.Value);
             }
             catch (Exception ex)
             {
@@ -490,7 +367,7 @@ namespace AECC.Core
             try
             {
                 // typeId IS the dictionary key now (== component.GetId()); no registry reverse needed.
-                component = this.components[componentTypeId];
+                component = this.Store.GetOrThrow(componentTypeId);
             }
             catch (Exception ex)
             {
@@ -502,17 +379,7 @@ namespace AECC.Core
 
         public bool MarkComponentChanged(ECSComponent component, bool serializationSilent = false, bool eventSilent = false)
         {
-            bool changed = false;
-            components.ExecuteOnChangeLocked(component.GetId(), component, (key, chcomponent, oldcomponent) =>
-                {
-                    Type componentClass = chcomponent.GetTypeFast();
-                    if (!serializationSilent)
-                    {
-                        changedComponents[componentClass] = 1;
-                        changed = true;
-                    }
-                }
-            );
+            bool changed = Store.MarkChanged(component.GetId(), component, serializationSilent) && !serializationSilent;
             if (!eventSilent && changed)
             {
                 component.ChangeReaction(this.entity);
@@ -525,11 +392,7 @@ namespace AECC.Core
             ECSComponent component2 = null;
             bool removed = false;
 
-            components.ExecuteOnRemoveLocked(Kid(componentClass), out component2, (key, component) =>
-            {
-                RemoveComponentProcess(component.GetTypeFast(), component);
-                removed = true;
-            });
+            removed = Store.Remove(Kid(componentClass), out component2);
             if (removed)
             {
                 component2.RemovingReaction(this.entity);
@@ -547,11 +410,7 @@ namespace AECC.Core
         {
             ECSComponent component2 = null;
             bool removed = false;
-            components.ExecuteOnRemoveLocked(typeId, out component2, (key, component) =>
-            {
-                RemoveComponentProcess(component.GetTypeFast(), component);
-                removed = true;
-            });
+            removed = Store.Remove(typeId, out component2);
             if (removed)
             {
                 component2.RemovingReaction(this.entity);
@@ -563,12 +422,13 @@ namespace AECC.Core
             return component2;
         }
 
-        private void RemoveComponentProcess(Type componentClass, ECSComponent component)
+        /// <summary>IComponentStoreListener: под write-локом ячейки, после изъятия из словаря
+        /// (бывш. RemoveComponentProcess, тело дословное).</summary>
+        public void ComponentRemoved(long typeUid, ECSComponent component)
         {
+            Type componentClass = component.GetTypeFast();
             this.changedComponents.Remove(componentClass, out _);
-            if(IdToTypeMode)
-                this.IdToTypeComponent.Remove(component.GetId(), out _);
-            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 this.SerializationContainer.Remove(component.GetId(), out _);
                 this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
@@ -587,7 +447,7 @@ namespace AECC.Core
         /// </summary>
         public bool HasComponentInGroup(long componentGroup)
         {
-            foreach (var component in components)
+            foreach (var component in Store)
             {
                 if (component.Value.ComponentGroups != null
                     && component.Value.ComponentGroups.TryGetValueI(componentGroup, out _, component.Value.SerialLocker))
@@ -603,7 +463,7 @@ namespace AECC.Core
             List<ECSComponent> toRemoveComponent = new List<ECSComponent>();
             List<ECSComponent> notRemovedComponent = new List<ECSComponent>();
             bool exception = false;
-            foreach (var component in components)
+            foreach (var component in Store)
             {
                 if (component.Value.ComponentGroups != null && component.Value.ComponentGroups.TryGetValueI(componentGroup, out _, component.Value.SerialLocker))
                 {
@@ -614,7 +474,7 @@ namespace AECC.Core
                 {
                     this.ExecuteWriteLockedComponent(removedComponent.GetTypeFast(), (key, component) =>
                     {
-                        if (!this.components.ContainsKey(removedComponent.GetId()))
+                        if (!this.Store.ContainsKey(removedComponent.GetId()))
                         {
                             exception = true;
                             notRemovedComponent.Add(removedComponent);
@@ -622,15 +482,13 @@ namespace AECC.Core
                         else
                         {
                             this.changedComponents.Remove(removedComponent.GetTypeFast(), out _);
-                            this.components.Remove(removedComponent.GetId());
-                            if((!Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner == null &&  !Defines.CutClientServerCollections) || (this.entity.ECSWorldOwner != null && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline && !Defines.CutClientServerCollections))
+                            this.Store.RemoveRaw(removedComponent.GetId());
+                            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
                             {
                                 this.SerializationContainer.Remove(removedComponent.GetId(), out _);
                                 this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
                                 this.RemovedComponents.Add(removedComponent.GetId());
                             }
-                            if(IdToTypeMode)
-                                this.IdToTypeComponent.Remove(removedComponent.GetId(), out _);
                             
                             removedComponent.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, removedComponent);
                             removedComponent.RemovingReaction(this.entity);
@@ -646,7 +504,7 @@ namespace AECC.Core
         public void FilterRemovedComponents(List<long> filterList, List<long> filteringOnlyGroups)
         {
             var bufFilterList = new List<long>(filterList);
-            foreach (var component in this.components)
+            foreach (var component in this.Store)
             {
                 if (filteringOnlyGroups.Count == 0)
                 {
@@ -704,9 +562,9 @@ namespace AECC.Core
 
         public bool AddComponentUnsafe(Type componentType, ECSComponent component, bool restoringMode = false, bool silent = false)
         {
-            if (this.components.UnsafeAdd(Kid(componentType), component))
+            if (this.Store.UnsafeAdd(Kid(componentType), component))
             {
-                AddComponentProcess(componentType, component, restoringMode);
+                ComponentAdded(Kid(componentType), component, restoringMode);
                 if (!silent)
                 {
                     component.AddedReaction(this.entity);
@@ -719,9 +577,9 @@ namespace AECC.Core
         public bool ChangeComponentUnsafe(ECSComponent component, bool silent = false, ECSEntity restoringOwner = null)
         {
             var oldcomponent = GetComponentUnsafe(component.GetTypeFast());
-            if (this.components.UnsafeChange(component.GetId(), component))
+            if (this.Store.UnsafeChange(component.GetId(), component))
             {
-                ChangeComponentProcess(component, oldcomponent, silent, restoringOwner);
+                ComponentChanged(component.GetId(), component, oldcomponent, silent, restoringOwner, false);
                 if (!silent)
                 {
                     component.ChangeReaction(this.entity);
@@ -733,9 +591,9 @@ namespace AECC.Core
 
         public bool RemoveComponentUnsafeSilent(Type componentType)
         {
-            if (this.components.UnsafeRemove(Kid(componentType), out var component))
+            if (this.Store.UnsafeRemove(Kid(componentType), out var component))
             {
-                RemoveComponentProcess(componentType, component);
+                ComponentRemoved(Kid(componentType), component);
                 return true;
             }
             return false;
@@ -744,14 +602,14 @@ namespace AECC.Core
         public ECSComponent GetComponentUnsafe(Type componentType)
         {
             ECSComponent component;
-            return (!this.components.TryGetValue(Kid(componentType), out component) ? null : component);
+            return (!this.Store.TryGetValue(Kid(componentType), out component) ? null : component);
         }
 
         public ECSComponent GetComponentUnsafe(long componentTypeId)
         {
             ECSComponent component;
             // typeId IS the slot key (== component.GetId()); same in both modes.
-            return !this.components.TryGetValue(componentTypeId, out component) ? null : component;
+            return !this.Store.TryGetValue(componentTypeId, out component) ? null : component;
         }
         #endregion
 
@@ -794,7 +652,7 @@ namespace AECC.Core
             if (previous_changed)//bullshit from oldest version, need to check, but better been deleted
             {
                 List<ECSComponent> changed_components = new List<ECSComponent>();
-                foreach (var component in components)
+                foreach (var component in Store)
                 {
                     if (component.Value.Unregistered)
                     {
@@ -817,9 +675,9 @@ namespace AECC.Core
             }
             else
             {
-                foreach (var component1 in components)
+                foreach (var component1 in Store)
                 {
-                    components.ExecuteReadLocked(component1.Key, (key, component) =>
+                    Store.ExecuteReadLocked(component1.Key, (key, component) =>
                     {
                         if (component.Unregistered)
                         {
@@ -839,28 +697,21 @@ namespace AECC.Core
         }
 
         public bool HasComponent(Type componentClass) =>
-            this.components.ContainsKey(Kid(componentClass));
+            this.Store.ContainsKey(Kid(componentClass));
 
         public bool HasComponent(long componentClassId)
         {
-            if(IdToTypeMode)
-            {
-                return this.IdToTypeComponent.ContainsKey(componentClassId);
-            }
-            else
-            {
-                return this.components.ContainsKey(componentClassId);
-            }
+            return this.Store.ContainsKey(componentClassId);
         }
             
 
         public void OnEntityDelete()
         {
-            this.components.EnterLockdown();
+            this.Store.EnterLockdown();
             List<long> snapshot;
             try
             {
-                snapshot = this.components.Keys.ToList();
+                snapshot = this.Store.Keys.ToList();
             }
             catch (Exception ex)
             {
@@ -884,27 +735,20 @@ namespace AECC.Core
             // Дочищаем технологические словари. К этому моменту RemoveComponentProcess
             // уже должен был вынести из них почти всё — это страховка от рассинхрона
             // и от компонентов, которых не оказалось в основном словаре.
-            if ((!Defines.CutClientServerCollections)
-                || (this.entity.ECSWorldOwner == null && !Defines.CutClientServerCollections)
-                || (this.entity.ECSWorldOwner != null
-                    && this.entity.ECSWorldOwner.WorldType != ECSWorld.WorldTypeEnum.Offline
-                    && !Defines.CutClientServerCollections))
+            if (WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
                 this.SerializationContainer.Clear();
                 this.RemovedComponents.Clear();
             }
 
-            if (IdToTypeMode)
-                this.IdToTypeComponent.Clear();
 
             this.changedComponents.Clear();
-            this.IdToTypeComponent.Clear();
         }
 
         public bool ExecuteOnNotHasComponent(Type componentType, Action action)
         {
             ECSComponent component;
-            if (this.components.ExecuteOnKeyHolded(Kid(componentType), action))
+            if (this.Store.ExecuteOnAbsent(Kid(componentType), action))
             {
                 return true;
             }
@@ -913,19 +757,19 @@ namespace AECC.Core
 
         public bool HoldComponentAddition(Type componentType, out RWToken token, bool holdMode = true)
         {
-            return this.components.HoldKey(Kid(componentType), out token, holdMode);
+            return this.Store.HoldAbsence(Kid(componentType), out token, holdMode);
         }
 
         public void ExecuteReadLockedComponent(Type componentType, Action<Type, ECSComponent> action)
         {
             // Public API keeps the Type-typed action; adapt to the long-keyed slot, supplying the
             // original Type from the closure so callers never see the internal id.
-            components.ExecuteReadLocked(Kid(componentType), (key, component) => action(componentType, component));
+            Store.ExecuteReadLocked(Kid(componentType), (key, component) => action(componentType, component));
         }
 
         public void ExecuteWriteLockedComponent(Type componentType, Action<Type, ECSComponent> action)
         {
-            components.ExecuteWriteLocked(Kid(componentType), (key, component) => action(componentType, component));
+            Store.ExecuteWriteLocked(Kid(componentType), (key, component) => action(componentType, component));
         }
 
         public bool GetReadLockedComponent<T>(out T component, out RWToken token) where T : ECSComponent
@@ -941,25 +785,25 @@ namespace AECC.Core
 
         public bool GetReadLockedComponent(Type componentType, out ECSComponent component, out RWToken token)
         {
-            return components.TryGetLockedElement(Kid(componentType), out component, out token, false);
+            return Store.TryGetLockedElement(Kid(componentType), out component, out token, false);
         }
 
         public bool GetWriteLockedComponent(Type componentType, out ECSComponent component, out RWToken token)
         {
-            return components.TryGetLockedElement(Kid(componentType), out component, out token, true);
+            return Store.TryGetLockedElement(Kid(componentType), out component, out token, true);
         }
 
         public RWToken GetWriteLockedComponentStorage()
         {
-            return components.LockStorage();
+            return Store.LockStorage();
         }
 
         #endregion
 
         public ICollection<Type> ComponentClasses =>
-            this.components.Values.Select(c => c.GetTypeFast()).ToList();
+            this.Store.Values.Select(c => c.GetTypeFast()).ToList();
 
         public ICollection<ECSComponent> Components =>
-            this.components.Values;
+            this.Store.Values;
     }
 }

@@ -39,7 +39,7 @@ namespace AECC.Core.BuiltInTypes.Types.AtomicType
             AlwaysUpdateCache = updateCache;
             if (enableClientBehaviour)
             {
-                if (this.ECSWorldOwner != null && this.ECSWorldOwner.WorldType == ECSWorld.WorldTypeEnum.Client)
+                if (this.ECSWorldOwner != null && this.ECSWorldOwner.Profile.AlwaysUpdatePathCache) // профиль (идея 1.5)
                 {
                     AlwaysUpdateCache = true;
                 }
