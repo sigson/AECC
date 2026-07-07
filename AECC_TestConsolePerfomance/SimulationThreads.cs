@@ -51,7 +51,7 @@ namespace Threads
             () => new LifetimeComponent(), () => new SoundEmitterComponent()
         };
 
-        private const int MaxEntities = 10000;
+        private const int MaxEntities = 100000;
         private const int SimulationDurationMs = 30_000; // 30 секунд симуляции
         private const int LockDelayMinMs = 1;
         private const int LockDelayMaxMs = 5;
@@ -553,6 +553,8 @@ namespace Threads
             sb.AppendLine("╚══════════════════════════════════════════════════════════════════════════╝");
 
             NLogger.Log(sb.ToString());
+
+            NLogger.logsBag.ForEach(x => NLogger.PrintErrorBase(x.Item1, x.Item2, x.Item3));
         }
     }
 }

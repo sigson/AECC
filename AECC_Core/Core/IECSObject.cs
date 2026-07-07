@@ -71,7 +71,14 @@ namespace AECC.Core
         /// <summary>
         /// serialization container where dictionary key is child ECSObject instanceId and value is array of id path with types to real IECSObject, example idlong;cmp / idlong;ent where cmp - component, ent - entity
         /// </summary>
-        public Dictionary<long, IECSObjectPathContainer> childECSObjectsId = new Dictionary<long, IECSObjectPathContainer>();
+        // Оптимизация аллокаций: зеркало детей сериализации теперь ЛЕНИВОЕ. Прежде каждый
+        // IECSObject (в т.ч. КАЖДЫЙ инстанс компонента — их swap порождает сотни тысяч) жадно
+        // аллоцировал пустой словарь, который у листовых объектов не используется никогда
+        // (в снапшоте это ~400K Dictionary<long, IECSObjectPathContainer>). Поле ОСТАЁТСЯ полем
+        // с тем же именем — набор сериализуемых членов не меняется, null round-trip'ится как
+        // null (тот же приём, что уже применён к ECSComponent.ComponentGroups). Материализуется
+        // только пайплайном сериализации (SnapshotPass); все прочие обращения null-guard'нуты.
+        public Dictionary<long, IECSObjectPathContainer> childECSObjectsId = null;
         [System.NonSerialized]
         private LockedDictionarySlim<long, IECSObject> storagechildECSObjects;
         private LockedDictionarySlim<long, IECSObject> childECSObjects
@@ -221,6 +228,11 @@ namespace AECC.Core
 
         public void IECSDispose()
         {
+            // Нет ни одного ребёнка (ленивое дерево не материализовано) — обходить/чистить
+            // нечего, и НЕ материализуем пустой storage только ради обхода. Для листовых
+            // объектов (компонентов) это убирает лишнюю аллокацию LockedDictionarySlim на
+            // каждом удалении.
+            if (storagechildECSObjects == null) return;
             if(ChildDispose)
             {
                 foreach (var childpair in childECSObjects)

@@ -80,6 +80,9 @@ namespace AECC.Core.Serialization
             }
             if (ChangesState == IECSObject.IECSObjectSerializedStateMode.Changed)
             {
+                // Ленивое зеркало: материализуем ровно здесь — в точке заполнения.
+                if (owner.childECSObjectsId == null)
+                    owner.childECSObjectsId = new Dictionary<long, IECSObjectPathContainer>();
                 owner.childECSObjectsId.Clear();
                 foreach (var childpair in owner.ChildrenForSerialization)
                 {
@@ -98,7 +101,9 @@ namespace AECC.Core.Serialization
         {
             var newchildECSObjects = new DictionaryWrapper<long, IECSObject>();
 
-            if (retryGetECSObjects)
+            // Ленивое зеркало: null эквивалентно пустому словарю (поведение прежнее —
+            // нижний проход по ChildrenForSerialization всё равно вычистит лишних детей).
+            if (retryGetECSObjects && owner.childECSObjectsId != null)
             {
                 foreach (var entry in owner.childECSObjectsId)
                 {
@@ -112,15 +117,18 @@ namespace AECC.Core.Serialization
                 }
             }
 
-            foreach (var entry in owner.childECSObjectsId)
+            if (owner.childECSObjectsId != null)
             {
-                if (owner.ContainsChildObject(entry.Key))
-                    continue;
-
-                newchildECSObjects[entry.Key] = entry.Value.ECSObject;
-                if (entry.Value.ECSObject != null)
+                foreach (var entry in owner.childECSObjectsId)
                 {
-                    owner.AddChildObject(entry.Value.ECSObject);
+                    if (owner.ContainsChildObject(entry.Key))
+                        continue;
+
+                    newchildECSObjects[entry.Key] = entry.Value.ECSObject;
+                    if (entry.Value.ECSObject != null)
+                    {
+                        owner.AddChildObject(entry.Value.ECSObject);
+                    }
                 }
             }
             foreach (var entry in owner.ChildrenForSerialization)

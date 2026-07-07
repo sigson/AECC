@@ -183,11 +183,14 @@ namespace AECC.Core
             var newParent = deletedEntity.ownerECSObject;
             var children = new List<ECSEntity>();
 
-            foreach (var kvp in deletedEntity.childECSObjectsId)
+            if (deletedEntity.childECSObjectsId != null) // ленивое зеркало: null == детей нет
             {
-                if (deletedEntity.TryGetChildObject(kvp.Key, out var childObj) && childObj is ECSEntity childEnt)
+                foreach (var kvp in deletedEntity.childECSObjectsId)
                 {
-                    children.Add(childEnt);
+                    if (deletedEntity.TryGetChildObject(kvp.Key, out var childObj) && childObj is ECSEntity childEnt)
+                    {
+                        children.Add(childEnt);
+                    }
                 }
             }
 

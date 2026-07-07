@@ -108,6 +108,65 @@ namespace AECC.Core
             NLogger.LogError(ex);
         }
 
+        // ── Оптимизация аллокаций: обработчик ошибок как КЭШ-ПОЛЕ, а не method group ──
+        // Прежде `d.Drain(scheduler, OnLifecycleError)` создавал НОВЫЙ Action<Exception> на
+        // каждую реакцию (в снапшоте — сотни тысяч Action<Exception>). Делегат создаётся
+        // один раз на инстанс и переиспользуется.
+        [System.NonSerialized]
+        [IgnoreDataMember]
+        private Action<Exception> _onLifecycleError;
+        private Action<Exception> LifecycleErrorHandler
+        {
+            get { return _onLifecycleError ?? (_onLifecycleError = OnLifecycleError); }
+        }
+
+        // ── Оптимизация аллокаций: пропуск lifecycle-диспетчера для ЛИСТОВЫХ компонентов ──
+        // Компонент без переопределённых OnAdded/OnChanged/OnRemoved не порождает
+        // пользовательских реакций. Для таких (а это подавляющее большинство data-компонентов)
+        // диспетчер (ComponentLifecycleDispatcher), замыкания SetPendingAdd/EnqueueChange/
+        // SetPendingRemove, Queue<Action> и планирование через RunAsync не нужны:
+        //   • Added  — база OnAdded это no-op, если мир не помечает Changed при добавлении;
+        //   • Changed— база OnChanged пустая;
+        //   • Removed— пользовательской логики нет, штатная очистка исполняется ИНЛАЙН.
+        // Условие едино для всех трёх реакций (сохраняет инвариант «Add→Change→Remove»:
+        // если хоть один хук переопределён — все три идут прежним асинхронным путём, чтобы
+        // не смешивать инлайн и очередь и не нарушить порядок). Проверка переопределений —
+        // рефлексия ОДИН РАЗ на тип, результат кэшируется.
+        private static readonly ConcurrentDictionary<Type, bool> _typeHasUserLifecycleHooks
+            = new ConcurrentDictionary<Type, bool>();
+
+        private static bool TypeHasUserLifecycleHooks(Type t)
+        {
+            return _typeHasUserLifecycleHooks.GetOrAdd(t, type =>
+                IsLifecycleHookOverridden(type, "OnAdded")
+                || IsLifecycleHookOverridden(type, "OnChanged")
+                || IsLifecycleHookOverridden(type, "OnRemoved"));
+        }
+
+        private static bool IsLifecycleHookOverridden(Type type, string name)
+        {
+            var m = type.GetMethod(name,
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Public,
+                null, new[] { typeof(ECSEntity) }, null);
+            return m != null && m.DeclaringType != typeof(ECSComponent);
+        }
+
+        /// <summary>true, если у компонента нет пользовательских lifecycle-хуков и текущий мир
+        /// не требует серверной пометки Changed при добавлении (тогда база OnAdded — no-op).
+        /// В этом случае реакции исполняются без диспетчера и без RunAsync.</summary>
+        private bool CanRunLifecycleInline
+        {
+            get
+            {
+                if (TypeHasUserLifecycleHooks(this.GetTypeFast())) return false;
+                var w = this.ECSWorldOwner;
+                if (w != null && w.Profile.ServerMarksChangedOnAdd) return false; // база OnAdded не no-op
+                return true;
+            }
+        }
+
 
         public ECSComponent()
         {
@@ -172,6 +231,10 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void AddedReaction(ECSEntity entity)
         {
+            // Fast-path: листовой компонент, база OnAdded — no-op для этого мира.
+            // Ни диспетчера, ни замыкания, ни RunAsync.
+            if (CanRunLifecycleInline) return;
+
             var d = Lifecycle;
             lock (d.SyncRoot)
             {
@@ -185,7 +248,7 @@ namespace AECC.Core
                     }
                 });
             }
-            d.Drain(LifecycleScheduler, OnLifecycleError);
+            d.Drain(LifecycleScheduler, LifecycleErrorHandler);
         }
 
         protected virtual void OnAdded(ECSEntity entity)
@@ -202,6 +265,9 @@ namespace AECC.Core
         /// <param name="entity"></param>
         public void ChangeReaction(ECSEntity entity)
         {
+            // Fast-path: листовой компонент, база OnChanged пустая. Нечего исполнять.
+            if (CanRunLifecycleInline) return;
+
             var d = Lifecycle;
             lock (d.SyncRoot)
             {
@@ -215,7 +281,7 @@ namespace AECC.Core
                     }
                 });
             }
-            d.Drain(LifecycleScheduler, OnLifecycleError);
+            d.Drain(LifecycleScheduler, LifecycleErrorHandler);
         }
 
         protected virtual void OnChanged(ECSEntity entity)
@@ -231,6 +297,27 @@ namespace AECC.Core
             if (AlreadyRemovedReaction) return;
             AlreadyRemovedReaction = true;
 
+            // Fast-path: листовой компонент. Пользовательской логики OnRemoved нет, но
+            // штатная очистка (сброс shared-полей + IECSDispose) обязана выполниться —
+            // делаем это ИНЛАЙН, без диспетчера/планировщика. Безопасно: RemovingReaction
+            // вызывается уже ПОСЛЕ Store.Remove (лок ячейки хранилища не удерживается), а
+            // IECSDispose у бездетного объекта не реентрит RemoveComponent (ChainedIECSDispose
+            // вызывается только на детях, которых нет).
+            if (CanRunLifecycleInline)
+            {
+                try
+                {
+                    this.OnRemoved(entity);
+                    ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
+                    this.IECSDispose();
+                }
+                catch (Exception ex)
+                {
+                    OnLifecycleError(ex);
+                }
+                return;
+            }
+
             var d = Lifecycle;
             lock (d.SyncRoot)
             {
@@ -244,7 +331,7 @@ namespace AECC.Core
                     }
                 });
             }
-            d.Drain(LifecycleScheduler, OnLifecycleError);
+            d.Drain(LifecycleScheduler, LifecycleErrorHandler);
         }
 
         protected virtual void OnRemoved(ECSEntity entity)
@@ -273,8 +360,9 @@ namespace AECC.Core
             if (ComponentGroups != null) ComponentGroups.ClearI(this.SerialLocker);
             ECSSharedField<object>.RemoveAllCachedValuesForId(this.instanceId);
 
-            // Сброс состояния для переиспользования компонента
-            Lifecycle.Reset();
+            // Сброс состояния для переиспользования компонента.
+            // Не материализуем диспетчер ради Reset, если его никогда не создавали (fast-path).
+            _lifecycle?.Reset();
             AlreadyRemovedReaction = false;
         }
         public object Clone() => MemberwiseClone();
