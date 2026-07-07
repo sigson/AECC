@@ -57,10 +57,180 @@ namespace AECC.Core
     /// </summary>
     public sealed class ComponentStore : IEnumerable<KeyValuePair<long, ECSComponent>>
     {
-        private readonly LockedDictionarySlim<long, ECSComponent> _slots;
+        // ФАЗА ОПТИМИЗАЦИИ ПАМЯТИ: пер-сущностное хранилище переведено с
+        // LockedDictionarySlim (ConcurrentDictionary + отдельный вложенный _keysHolding для
+        // absence-holds + неограниченно растущие ячейки при preserveLockingKeys) на
+        // ComponentBag (компактный массив Cell[], лок инлайн как long в ячейке, absence-holds
+        // в том же слоте в состоянии ABSENT — БЕЗ вложенного словаря, слоты переиспользуются).
+        // На 100k сущностей это убирает ~3 ConcurrentDictionary на сущность (Tables/Node) и
+        // весь Cell<long,bool> _keysHolding-кластер. Ключ type-uid — всегда int-диапазон
+        // ([TypeUid(int)]), поэтому (int)typeUid — точная конверсия.
+        private readonly ComponentBag<ECSComponent> _slots;
         private readonly IComponentStoreListener _listener;
 
         public ComponentStore(ConcurrencyMode mode, IComponentStoreListener listener)
+        {
+            if (listener == null) throw new ArgumentNullException("listener");
+            _listener = listener;
+            _slots = new ComponentBag<ECSComponent>(mode);
+        }
+
+        // ───────── транзакционная матрица (с нотификацией слушателя) ─────────
+
+        /// <summary>Добавление (дословно прежняя двухфазная форма AddComponentImmediately:
+        /// внешний ContainsKey-гейт + ExecuteOnAddLocked).</summary>
+        public bool Add(long typeUid, ECSComponent component, bool restoringMode)
+        {
+            bool added = false;
+            int k = (int)typeUid;
+            if (!_slots.ContainsKey(k))
+            {
+                _slots.ExecuteOnAddLocked(k, component, (key, newcomponent) =>
+                {
+                    _listener.ComponentAdded(key, newcomponent, restoringMode);
+                    added = true;
+                });
+            }
+            return added;
+        }
+
+        /// <summary>Add-или-Change одним транзактом (бывш. AddOrChangeComponentImmediately).
+        /// changedBranch=true, если исполнилась change-ветка (исход dirty решает слушатель по silent).
+        /// restoringOwner передаёт вызывающий (store сущности не знает): в restoring-режиме — сущность-владелец.</summary>
+        public void AddOrChange(long typeUid, ECSComponent component, bool restoringMode, bool silent, ECSEntity restoringOwner, out bool added, out bool changedBranch)
+        {
+            bool a = false, c = false;
+            _slots.ExecuteOnAddOrChangeLocked((int)typeUid, component, (key, newcomponent) =>
+            {
+                _listener.ComponentAdded(key, newcomponent, restoringMode);
+                a = true;
+            }, (key, newcomponent, oldcomponent) =>
+            {
+                _listener.ComponentChanged(key, newcomponent, oldcomponent, silent, restoringOwner, restoringMode);
+                c = true;
+            });
+            added = a;
+            changedBranch = c;
+        }
+
+        /// <summary>Замена значения (бывш. ChangeComponent).</summary>
+        public bool Change(long typeUid, ECSComponent component, bool silent, ECSEntity restoringOwner)
+        {
+            bool changed = false;
+            _slots.ExecuteOnChangeLocked((int)typeUid, component, (key, chcomponent, oldcomponent) =>
+            {
+                _listener.ComponentChanged(key, chcomponent, oldcomponent, silent, restoringOwner, false);
+                changed = true;
+            });
+            return changed;
+        }
+
+        /// <summary>Пометка изменённым без замены значения (бывш. MarkComponentChanged).</summary>
+        public bool MarkChanged(long typeUid, ECSComponent component, bool serializationSilent)
+        {
+            bool touched = false;
+            _slots.ExecuteOnChangeLocked((int)typeUid, component, (key, chcomponent, oldcomponent) =>
+            {
+                _listener.ComponentMarkedChanged(key, chcomponent, serializationSilent);
+                touched = true;
+            });
+            return touched;
+        }
+
+        /// <summary>Изъятие (бывш. Remove*Immediately ядро).</summary>
+        public bool Remove(long typeUid, out ECSComponent component)
+        {
+            bool removed = false;
+            _slots.ExecuteOnRemoveLocked((int)typeUid, out component, (key, victim) =>
+            {
+                _listener.ComponentRemoved(key, victim);
+                removed = true;
+            });
+            return removed;
+        }
+
+        // ───────── absence-holds (контрактная машинерия, идея 1.13) ─────────
+
+        public bool ExecuteOnAbsent(long typeUid, Action action) { return _slots.ExecuteHoldRead((int)typeUid, action); }
+        /// <summary>Прежний LockedDictionarySlim.HoldKey(key, out, holdMode) ИГНОРИРОВАЛ holdMode
+        /// и всегда брал SHARED-hold отсутствия — поведение сохранено дословно (exclusive:false).</summary>
+        public bool HoldAbsence(long typeUid, out RWToken token, bool holdMode) { return _slots.Hold((int)typeUid, false, out token); }
+
+        // ───────── проекции словаря (хранение, локи, lockdown/freeze) ─────────
+        // Имена и семантика — дословно как раньше; ComponentBag покрывает ту же
+        // транзакционную матрицу через per-cell RWCell.
+
+        public bool ContainsKey(long typeUid) { return _slots.ContainsKey((int)typeUid); }
+        public bool TryGetValue(long typeUid, out ECSComponent component) { return _slots.TryGetValue((int)typeUid, out component); }
+        /// <summary>Индексаторная семантика прежнего components[key]: KeyNotFoundException при отсутствии.</summary>
+        public ECSComponent GetOrThrow(long typeUid)
+        {
+            ECSComponent component;
+            if (_slots.TryGetValueUnsafe((int)typeUid, out component)) return component;
+            throw new KeyNotFoundException();
+        }
+
+        // Прямой вызов action(typeUid, value) с исходным long — БЕЗ адаптер-замыкания int->long.
+        public void ExecuteReadLocked(long typeUid, Action<long, ECSComponent> action)
+        {
+            ECSComponent v; RWToken t;
+            if (_slots.TryGetReadLocked((int)typeUid, out v, out t)) { try { action(typeUid, v); } catch { } t.Dispose(); }
+        }
+        public void ExecuteWriteLocked(long typeUid, Action<long, ECSComponent> action)
+        {
+            ECSComponent v; RWToken t;
+            if (_slots.TryGetWriteLocked((int)typeUid, out v, out t)) { try { action(typeUid, v); } catch { } t.Dispose(); }
+        }
+        public bool TryGetLockedElement(long typeUid, out ECSComponent component, out RWToken token, bool write) { return _slots.TryGetLocked((int)typeUid, write, out component, out token); }
+        public RWToken LockStorage() { return _slots.LockStorage(); }
+        public void EnterLockdown() { _slots.EnterLockdown(); }
+        public void ExitLockdown() { _slots.ExitLockdown(); }
+
+        public bool UnsafeAdd(long typeUid, ECSComponent component) { return _slots.UnsafeAdd((int)typeUid, component); }
+        public bool UnsafeChange(long typeUid, ECSComponent component) { return _slots.UnsafeChange((int)typeUid, component); }
+        public bool UnsafeRemove(long typeUid, out ECSComponent component) { return _slots.UnsafeRemove((int)typeUid, out component); }
+        /// <summary>Прямое изъятие без слушателя (используется дословно сохранённым
+        /// группоснятием RemoveComponentsWithGroup, где side-effects инлайновые).</summary>
+        public bool RemoveRaw(long typeUid) { ECSComponent _; return _slots.Remove((int)typeUid, out _); }
+
+        public ICollection<long> Keys
+        {
+            get
+            {
+                var snap = _slots.Snapshot();
+                var list = new List<long>(snap.Count);
+                for (int i = 0; i < snap.Count; i++) list.Add(snap[i].Key);
+                return list;
+            }
+        }
+        public ICollection<ECSComponent> Values
+        {
+            get
+            {
+                var snap = _slots.Snapshot();
+                var list = new List<ECSComponent>(snap.Count);
+                for (int i = 0; i < snap.Count; i++) list.Add(snap[i].Value);
+                return list;
+            }
+        }
+        public int Count { get { return _slots.Count; } }
+
+        public IEnumerator<KeyValuePair<long, ECSComponent>> GetEnumerator()
+        {
+            var snap = _slots.Snapshot();
+            for (int i = 0; i < snap.Count; i++)
+                yield return new KeyValuePair<long, ECSComponent>(snap[i].Key, snap[i].Value);
+        }
+        IEnumerator IEnumerable.GetEnumerator() { return GetEnumerator(); }
+    }
+
+
+    public sealed class ComponentStoreLockSlim : IEnumerable<KeyValuePair<long, ECSComponent>>
+    {
+        private readonly LockedDictionarySlim<long, ECSComponent> _slots;
+        private readonly IComponentStoreListener _listener;
+
+        public ComponentStoreLockSlim(ConcurrencyMode mode, IComponentStoreListener listener)
         {
             if (listener == null) throw new ArgumentNullException("listener");
             _listener = listener;
