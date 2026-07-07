@@ -193,7 +193,32 @@ namespace AECC.Locking
 
         // ───────── core add/change (ported from LockedDictionary.TryAddOrChange) ─────────
 
-        private bool TryAddOrChange(TKey key, TValue value, out TValue oldValue, out RWToken lockToken,
+        /// <summary>
+        /// Explicit outcome of a structural add/change. This is the SOLE source of truth for
+        /// "what happened", decoupled from whether a REAL <see cref="RWToken"/> was produced.
+        /// In OneThreadMode every cell acquire yields a dummy (non-real) token, so the outcome
+        /// MUST NOT be inferred from <see cref="RWToken.IsReal"/> — doing so silently dropped the
+        /// executors' callbacks in single-thread mode. <see cref="RWToken.IsReal"/> is now purely
+        /// a disposal predicate ("is there anything to release"), never a control-flow signal.
+        /// </summary>
+        private enum AddOutcome : byte
+        {
+            /// <summary>Nothing happened (soft lockdown). No callback should run.</summary>
+            Refused = 0,
+            /// <summary>A brand-new key was inserted.</summary>
+            Added = 1,
+            /// <summary>An existing key's value was replaced; <c>oldValue</c> is meaningful.</summary>
+            Changed = 2,
+        }
+
+        /// <summary>
+        /// Structural add/change core. Returns the exact <see cref="AddOutcome"/> in BOTH threading
+        /// modes. When <paramref name="lockedMode"/> is set, <paramref name="lockToken"/> carries the
+        /// cell's write lock on Added/Changed (real in multi-thread, dummy in OneThreadMode) — the
+        /// caller runs its callback under that lock and disposes it afterwards. On Refused the token
+        /// is <c>default</c>. MT-core control flow (freeze barrier, CellLock, retry loop) is unchanged.
+        /// </summary>
+        private AddOutcome TryAddOrChangeCore(TKey key, TValue value, out TValue oldValue, out RWToken lockToken,
             bool lockedMode = false, bool? overrideLockingMode = false)
         {
             lockToken = default(RWToken);
@@ -203,7 +228,7 @@ namespace AECC.Locking
             {
                 using (GlobalRead())
                 {
-                if (_lockdown) return false;
+                if (_lockdown) return AddOutcome.Refused;
 
                 // Cell lock mode for add/change. For a REAL value store, adding or replacing the
                 // value is an exclusive mutation -> WRITE lock (this is the fix for the validator's
@@ -239,7 +264,7 @@ namespace AECC.Locking
                         {
                             if (holding) holdToken.Dispose();
                             lockToken = newTok;
-                            return true; // added
+                            return AddOutcome.Added;
                         }
                         newTok.Dispose();               // add lost a race
                         if (holding) holdToken.Dispose();
@@ -259,11 +284,25 @@ namespace AECC.Locking
                     oldValue = dvalue.Value;
                     dvalue.Value = value;
                     if (lockedMode) lockToken = token; else token.Dispose();
-                    return false; // changed
+                    return AddOutcome.Changed;
                 }
                 }
             }
             finally { LeaveFreeze(counted); }
+        }
+
+        /// <summary>
+        /// Thin bool projection of <see cref="TryAddOrChangeCore"/> preserving the historical
+        /// contract used by the plain-dictionary surface (<c>TryAdd</c>, indexer, <c>Add</c>,
+        /// <c>TryAddChangeLockedElement</c>): <c>true</c> == a new key was added, <c>false</c> ==
+        /// changed or refused. Callers that must distinguish Changed from Refused (the transactional
+        /// executors) call <see cref="TryAddOrChangeCore"/> directly instead of this wrapper.
+        /// </summary>
+        private bool TryAddOrChange(TKey key, TValue value, out TValue oldValue, out RWToken lockToken,
+            bool lockedMode = false, bool? overrideLockingMode = false)
+        {
+            return TryAddOrChangeCore(key, value, out oldValue, out lockToken, lockedMode, overrideLockingMode)
+                   == AddOutcome.Added;
         }
 
         private bool TryRemove(TKey key, out TValue value, Action<TKey, TValue> action = null)
@@ -354,6 +393,11 @@ namespace AECC.Locking
                 RWToken rd;
                 // exclusive ? write-lock the holding cell : read-lock it (shared among holders)
                 _keysHolding.TryAddChangeLockedElement(key, false, true, out rd, exclusive);
+                // Legitimate IsReal use (NOT the outcome-vs-token conflation fixed elsewhere): this
+                // path is MULTI-THREAD only — OneThreadMode returned above. Here a non-real token means
+                // the hold-cell lock came back as a same-thread cross-mode dummy, so the absence hold
+                // cannot be guaranteed and must be refused. This is exactly ComponentBag.WriteUsable
+                // (t.IsReal || OneThreadMode) with the OneThreadMode arm already peeled off by the guard.
                 if (rd.IsReal)
                 {
                     if (!_dict.ContainsKey(key)) // lock-free; never re-acquire a storage lock while holding the holding cell
@@ -390,16 +434,14 @@ namespace AECC.Locking
         public void ExecuteOnAddLocked(TKey key, TValue value, Action<TKey, TValue> action)
         {
             RWToken lockToken;
-            bool result = TryAddOrChange(key, value, out _, out lockToken, true);
-            if (result && lockToken.IsReal)
+            // Gate the callback on the OPERATION OUTCOME, not on the token's realness: in
+            // OneThreadMode the add succeeds but the token is a dummy, so keying on IsReal would
+            // (and previously did) skip the callback and leave a torn insert.
+            if (TryAddOrChangeCore(key, value, out _, out lockToken, true) == AddOutcome.Added)
             {
                 try { action(key, value); } catch { }
-                lockToken.Dispose();
             }
-            else if (lockToken.IsReal)
-            {
-                lockToken.Dispose();
-            }
+            lockToken.Dispose(); // real token -> releases the cell write lock; dummy/default -> no-op
         }
 
         public void ExecuteOnChangeLocked(TKey key, TValue value, Action<TKey, TValue, TValue> action)
@@ -420,16 +462,16 @@ namespace AECC.Locking
         {
             RWToken lockToken;
             TValue oldvalue;
-            if (TryAddOrChange(key, value, out oldvalue, out lockToken, true) && lockToken.IsReal)
+            AddOutcome outcome = TryAddOrChangeCore(key, value, out oldvalue, out lockToken, true);
+            if (outcome == AddOutcome.Added)
             {
                 try { onAdd(key, value); } catch { }
-                lockToken.Dispose();
             }
-            else if (lockToken.IsReal)
+            else if (outcome == AddOutcome.Changed)
             {
                 try { onChange(key, value, oldvalue); } catch { }
-                lockToken.Dispose();
             }
+            lockToken.Dispose(); // held across the callback in MT; no-op for the OneThreadMode dummy
         }
 
         public void ExecuteOnRemoveLocked(TKey key, out TValue value, Action<TKey, TValue> action)
@@ -441,13 +483,13 @@ namespace AECC.Locking
         {
             RWToken lockToken;
             TValue oldValue;
-            bool result = TryAddOrChange(key, value, out oldValue, out lockToken, true);
-            if (lockToken.IsReal)
+            AddOutcome outcome = TryAddOrChangeCore(key, value, out oldValue, out lockToken, true);
+            if (outcome != AddOutcome.Refused) // add OR change -> run (previously gated on IsReal)
             {
                 try { action(key, value, oldValue); } catch { }
-                lockToken.Dispose();
             }
-            return result;
+            lockToken.Dispose();
+            return outcome == AddOutcome.Added; // historical return: true iff a new key was added
         }
 
         public void ExecuteReadLocked(TKey key, Action<TKey, TValue> action)
