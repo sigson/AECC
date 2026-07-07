@@ -10,10 +10,11 @@ using System.Threading.Tasks;
 using System.IO;
 using AECC.Core.Logging;
 using AECC.Core.Serialization;
-using static AECC.Core.Serialization.EntitySerializer;
 using AECC.Extensions;
 using AECC.Core;
 using AECC.ECS.Core;
+using AECC.Serialization;
+using static AECC.Serialization.EntitySerializer;
 
 namespace AECC.Harness.Serialization
 {

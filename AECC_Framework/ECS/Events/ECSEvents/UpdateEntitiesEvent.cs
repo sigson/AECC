@@ -2,6 +2,7 @@
 using AECC.Core.Serialization;
 using AECC.ECS.Core;
 using AECC.Network;
+using AECC.Serialization;
 using MessagePack;
 using System.Collections.Generic;
 
@@ -19,7 +20,12 @@ namespace AECC.ECS.Events.ECSEvents
         {
             foreach (var entity in Entities)
             {
-                ECSWorld.GetWorld(this.WorldOwnerId).EntityWorldSerializer.UpdateDeserialize(entity);
+                var world = ECSWorld.GetWorld(this.WorldOwnerId);
+                if(world.EntityWorldSerializer == null)
+                {
+                    world.EntityWorldSerializer = SerializationBootstrap.Attach(world);
+                }
+                (world.EntityWorldSerializer as EntityNetSerializer).UpdateDeserialize(entity);
             }
         }
     }

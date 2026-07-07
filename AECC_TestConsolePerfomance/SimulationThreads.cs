@@ -86,6 +86,7 @@ namespace Threads
 
         public void Start()
         {
+            Defines.OneThreadMode = false;
             var world = ECSWorld.GetWorld(0);
 
             NLogger.Log("╔══════════════════════════════════════════════════════════════╗");
