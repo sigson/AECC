@@ -474,12 +474,92 @@ namespace AECC.Locking
 
         public bool ExecuteOnAddOrChangeLocked(int key, TValue value, Action<int, TValue> onAdd, Action<int, TValue, TValue> onChange)
         {
-            TValue old;
-            bool added = AddOrChange(key, value, out old);
-            if (added) { if (onAdd != null) { try { onAdd(key, value); } catch { } } }
-            else { if (onChange != null) { try { onChange(key, value, old); } catch { } } }
-            return added;
+            // ПАРИТЕТ с LockedDictionarySlim.ExecuteOnAddOrChangeLocked: колбэк (слушатель
+            // store — обновление сериализационных зеркал + query-индекса) держится ПОД
+            // write-локом ячейки (см. там же: "held across the callback in MT"). Прежняя
+            // реализация делегировала в AddOrChange (лок освобождался ВНУТРИ) и звала колбэк
+            // ПОСЛЕ релиза — это вынесло бы слушателя из-под лока (регрессия видимости).
+            // Структура — как в ExecuteOnAddLocked: placeholder ABSENT под _struct, захват
+            // ячейки СНАРУЖИ _struct, ревалидация, публикация значения + колбэк под локом.
+            using (Mutation())
+            {
+                if (_lockdown) return false;
+                while (true)
+                {
+                    Cell c;
+                    lock (_struct)
+                    {
+                        c = Find(key);
+                        if (c == null)
+                        {
+                            c = AllocOrReclaim();
+                            c.Key = key; c.Value = null; c.State = ABSENT;
+                        }
+                    }
+                    RWToken t = CellLock(c, true);
+                    if (!WriteUsable(t)) { t.Dispose(); return false; } // cross-mode same-thread: refuse
+                    bool added = false, changed = false; TValue old = default(TValue);
+                    lock (_struct)
+                    {
+                        if (c.Key == key && c.State == ABSENT) { c.Value = value; c.State = PRESENT; added = true; }
+                        else if (c.Key == key && c.State == PRESENT) { old = c.Value; c.Value = value; changed = true; }
+                        // иначе ячейка перехвачена под другой ключ -> повтор
+                    }
+                    if (!added && !changed) { t.Dispose(); continue; }
+                    if (added) { if (onAdd != null) { try { onAdd(key, value); } catch { } } }
+                    else { if (onChange != null) { try { onChange(key, value, old); } catch { } } }
+                    t.Dispose();
+                    return added;
+                }
+            }
         }
+
+        // ───────── unsafe direct ops (без ячеечного лока; вызывающий гарантирует эксклюзив) ─────────
+        // Паритет с LockedDictionarySlim.Unsafe*: прямые операции над слотом. Используются на
+        // restore/rollback-путях (напр. откат значения ПОД уже удержанным ячеечным write-локом,
+        // где повторный захват был бы cross-mode-конфликтом). Структурная мутация — под _struct.
+        public bool UnsafeAdd(int key, TValue value)
+        {
+            lock (_struct)
+            {
+                Cell c = Find(key);
+                if (c != null && c.State == PRESENT) return false;
+                if (c == null) c = AllocOrReclaim();
+                c.Key = key; c.Value = value; c.State = PRESENT;
+                return true;
+            }
+        }
+
+        public bool UnsafeChange(int key, TValue value)
+        {
+            lock (_struct)
+            {
+                Cell c = Find(key);
+                if (c != null && c.State == PRESENT) { c.Value = value; return true; }
+                return false;
+            }
+        }
+
+        public bool UnsafeRemove(int key, out TValue value)
+        {
+            value = default(TValue);
+            lock (_struct)
+            {
+                Cell c = Find(key);
+                if (c != null && c.State == PRESENT)
+                {
+                    value = c.Value;
+                    c.Value = null;
+                    c.State = ABSENT;
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>Безопасное (lock-free) чтение значения — синоним TryGetValueUnsafe;
+        /// паритет с LockedDictionarySlim.TryGetValue (тоже без ячеечного лока).</summary>
+        public bool TryGetValue(int key, out TValue value) { return TryGetValueUnsafe(key, out value); }
 
         // ───────── remove (present->absent, exclusive) ─────────
 
