@@ -43,7 +43,7 @@ namespace AECC.Harness.Services
 #if UNITY_5_3_OR_NEWER
                 return FSExtensions.Combine(FSExtensions.Combine(persistentDataPath, "GameData"), "GameConfig");
 #endif
-#if NET && !GODOT
+#if NET || NETSTANDARD2_0_OR_GREATER && !GODOT
                 return FSExtensions.Combine(FSExtensions.Combine(Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName), "GameData"), "GameConfig");
 #endif
 #if GODOT
@@ -59,7 +59,7 @@ namespace AECC.Harness.Services
 #if UNITY_5_3_OR_NEWER
                 return FSExtensions.Combine(streamingAssetsPath, "GameData");
 #endif
-#if NET && !GODOT
+#if NET || NETSTANDARD2_0_OR_GREATER && !GODOT
                 return FSExtensions.Combine(Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName), "GameData");
 #endif
 #if GODOT
@@ -75,7 +75,7 @@ namespace AECC.Harness.Services
 #if UNITY_5_3_OR_NEWER
                 return FSExtensions.Combine(FSExtensions.Combine(streamingAssetsPath, "GameData"), "Config");
 #endif
-#if NET && !GODOT
+#if NET || NETSTANDARD2_0_OR_GREATER && !GODOT
                 return FSExtensions.Combine(FSExtensions.Combine(Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName), "GameData"), "Config");
 #endif
 #if GODOT

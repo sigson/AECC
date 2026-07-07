@@ -416,7 +416,7 @@ namespace AECC.Harness.Services
                 if (Defines.HiddenKeyNotFoundLog)
                     NLogger.LogError(e);
             }
-            return ls.ToHashSet().ToList();
+            return new HashSet<string>(ls).ToList();
         }
 
         public override void InitializeProcess()

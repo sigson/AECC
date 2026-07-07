@@ -1,4 +1,4 @@
-﻿#if NET || UNITY
+﻿#if NET || NETSTANDARD2_0_OR_GREATER || UNITY
 public static class GodotExtensionsMock
 {
     public static string FixPath(this string path)

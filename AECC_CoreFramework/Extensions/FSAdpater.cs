@@ -14,7 +14,7 @@ public class DirectoryAdapter
 
         public static bool Exists(string path)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 return Directory.Exists(path);
             #elif GODOT
             using(var dir = new Godot.Directory())
@@ -29,7 +29,7 @@ public class DirectoryAdapter
             #if GODOT
             using (var dir = new Godot.Directory())
                 return dir.DirExists(path);
-            #elif NET
+            #elif NET || NETSTANDARD2_0_OR_GREATER
                 return System.IO.Directory.Exists(path);
             #elif UNITY
                 return System.IO.Directory.Exists(path);
@@ -38,7 +38,7 @@ public class DirectoryAdapter
 
         public static DirectoryInfo CreateDirectory(string path, bool recursive = true)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 return Directory.CreateDirectory(path);
             #elif GODOT
             using(var dir = new Godot.Directory())
@@ -55,7 +55,7 @@ public class DirectoryAdapter
 
         public static void Delete(string path)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 Directory.Delete(path);
             #elif GODOT
             using(var dir = new Godot.Directory())
@@ -71,7 +71,7 @@ public class DirectoryAdapter
 
         public static void Delete(string path, bool recursive)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 Directory.Delete(path, recursive);
             #elif GODOT
                 if (recursive)
@@ -89,7 +89,7 @@ public class DirectoryAdapter
 
         public static string[] GetFiles(string path)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 return Directory.GetFiles(path, "*.*", SearchOption.AllDirectories);
             #elif GODOT
             using(var _godotDirectory = new Godot.Directory())
@@ -119,7 +119,7 @@ public class DirectoryAdapter
 
         public static string[] GetDirectories(string path)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 return Directory.GetDirectories(path);
             #elif GODOT
             using(var _godotDirectory = new Godot.Directory())
@@ -149,7 +149,7 @@ public class DirectoryAdapter
 
         public static string GetParent(string path)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 return Directory.GetParent(path)?.FullName;
             #elif GODOT
                 return FSExtensions.GetDirectoryName(path);
@@ -160,7 +160,7 @@ public class DirectoryAdapter
 
         public static IEnumerable<string> EnumerateDirectories(string path)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 return Directory.EnumerateDirectories(path);
             #elif GODOT
             using(var _godotDirectory = new Godot.Directory())
@@ -191,7 +191,7 @@ public class DirectoryAdapter
 
         public static void Move(string sourceDirName, string destDirName)
         {
-            #if NET
+            #if NET || NETSTANDARD2_0_OR_GREATER
                 Directory.Move(sourceDirName, destDirName);
             #elif GODOT
                 // Godot doesn't have a direct move directory method, so we implement it
@@ -347,7 +347,7 @@ public class FileAdapter
 {
     public static bool Exists(string path)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             return File.Exists(path);
         #elif GODOT
             var file = new Godot.File();
@@ -361,7 +361,7 @@ public class FileAdapter
 
     public static void Copy(string sourceFileName, string destFileName)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             File.Copy(sourceFileName, destFileName);
         #elif GODOT
             var file = new Godot.File();
@@ -400,7 +400,7 @@ public class FileAdapter
 
     public static void Copy(string sourceFileName, string destFileName, bool overwrite)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             File.Copy(sourceFileName, destFileName, overwrite);
         #elif GODOT
             if (!overwrite && Exists(destFileName))
@@ -413,7 +413,7 @@ public class FileAdapter
 
     public static void Delete(string path)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             File.Delete(path);
         #elif GODOT
             var file = new Godot.File();
@@ -433,7 +433,7 @@ public class FileAdapter
 
     public static FileStream Open(string path, FileMode mode)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             return File.Open(path, mode);
         #elif GODOT
             throw new NotSupportedException("Use OpenText, OpenRead, or OpenWrite instead for Godot");
@@ -444,7 +444,7 @@ public class FileAdapter
 
     public static StreamReader OpenText(string path)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             return File.OpenText(path);
         #elif GODOT
             var file = new Godot.File();
@@ -464,7 +464,7 @@ public class FileAdapter
 
     public static string ReadAllText(string path)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             return File.ReadAllText(path);
         #elif GODOT
             var file = new Godot.File();
@@ -486,7 +486,7 @@ public class FileAdapter
 
     public static void WriteAllText(string path, string contents)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             File.WriteAllText(path, contents);
         #elif GODOT
             var file = new Godot.File();
@@ -507,7 +507,7 @@ public class FileAdapter
 
     public static byte[] ReadAllBytes(string path)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             return File.ReadAllBytes(path);
         #elif GODOT
             var file = new Godot.File();
@@ -529,7 +529,7 @@ public class FileAdapter
 
     public static void WriteAllBytes(string path, byte[] bytes)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             File.WriteAllBytes(path, bytes);
         #elif GODOT
             var file = new Godot.File();
@@ -550,7 +550,7 @@ public class FileAdapter
 
     public static void Move(string sourceFileName, string destFileName)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             File.Move(sourceFileName, destFileName);
         #elif GODOT
             Copy(sourceFileName, destFileName);
@@ -595,7 +595,7 @@ public class FileAdapter
 
     public static DateTime GetLastWriteTime(string path)
     {
-        #if NET
+        #if NET || NETSTANDARD2_0_OR_GREATER
             return File.GetLastWriteTime(path);
         #elif GODOT
             var file = new Godot.File();

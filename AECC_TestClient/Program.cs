@@ -38,7 +38,7 @@ namespace TestClient
             // =====================================================
             Console.WriteLine("\n[1] RegisterAllServices()...");
 
-            ECSWorld.GetSerializationAdapter = () => new AECC.Harness.Serialization.SerializationAdapter();
+            //ECSWorld.GetSerializationAdapter = () => new AECC.Harness.Serialization.SerializationAdapter();///update framework regression
 
             IService.RegisterAllServices(new List<Type>{ typeof(ConstantService) });
 

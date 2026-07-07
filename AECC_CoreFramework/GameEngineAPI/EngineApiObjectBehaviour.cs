@@ -777,7 +777,7 @@ namespace AECC.GameEngineAPI
         }
     }
 
-#elif NET
+#elif NET || NETSTANDARD2_0_OR_GREATER
         : StaticEngineApiObjectBehaviour, IEngineApiObjectBehaviour, IEngineApiCallableMethods //: ENGINEGAMEOBJECT, IEngineApiObjectBehaviour, IEngineApiCallableMethods
     {
         public Action OnUpdate = () => {};
@@ -796,7 +796,7 @@ namespace AECC.GameEngineAPI
 
 #if UNITY_5_3_OR_NEWER
         public UnityEngine.GameObject gameObject { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-#elif NET
+#elif NET || NETSTANDARD2_0_OR_GREATER
         public EngineApiObjectBehaviour gameObject { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
 #endif
         public bool enabled { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
