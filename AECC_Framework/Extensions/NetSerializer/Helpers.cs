@@ -1,6 +1,6 @@
-﻿/*
+/*
  * Copyright 2015 Tomi Valkeinen
- * 
+ *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -11,9 +11,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
-using System.Reflection.Emit;
-using System.Text;
 
 namespace NetSerializer
 {
@@ -38,165 +37,186 @@ namespace NetSerializer
 			}
 		}
 
-		public static DynamicMethod GenerateDynamicSerializerStub(Type type)
+		public static Type GetWriterDelegateType(Type type)
 		{
-			var dm = new DynamicMethod("Serialize", null,
-				new Type[] { typeof(Serializer), typeof(Stream), type },
-				typeof(Serializer), true);
-
-			dm.DefineParameter(1, ParameterAttributes.None, "serializer");
-			dm.DefineParameter(2, ParameterAttributes.None, "stream");
-			dm.DefineParameter(3, ParameterAttributes.None, "value");
-
-			return dm;
+			return typeof(SerializeDelegate<>).MakeGenericType(type);
 		}
 
-		public static DynamicMethod GenerateDynamicDeserializerStub(Type type)
+		public static Type GetReaderDelegateType(Type type)
 		{
-			var dm = new DynamicMethod("Deserialize", null,
-				new Type[] { typeof(Serializer), typeof(Stream), type.MakeByRefType() },
-				typeof(Serializer), true);
-			dm.DefineParameter(1, ParameterAttributes.None, "serializer");
-			dm.DefineParameter(2, ParameterAttributes.None, "stream");
-			dm.DefineParameter(3, ParameterAttributes.Out, "value");
-
-			return dm;
+			return typeof(DeserializeDelegate<>).MakeGenericType(type);
 		}
 
-#if GENERATE_DEBUGGING_ASSEMBLY
-		public static MethodBuilder GenerateStaticSerializerStub(TypeBuilder tb, Type type)
+		static Expression ConvertIfNeeded(Expression expr, Type targetType)
 		{
-			var mb = tb.DefineMethod("Serialize", MethodAttributes.Public | MethodAttributes.Static, null,
-				new Type[] { typeof(Serializer), typeof(Stream), type });
-			mb.DefineParameter(1, ParameterAttributes.None, "serializer");
-			mb.DefineParameter(2, ParameterAttributes.None, "stream");
-			mb.DefineParameter(3, ParameterAttributes.None, "value");
-			return mb;
-		}
-
-		public static MethodBuilder GenerateStaticDeserializerStub(TypeBuilder tb, Type type)
-		{
-			var mb = tb.DefineMethod("Deserialize", MethodAttributes.Public | MethodAttributes.Static, null,
-				new Type[] { typeof(Serializer), typeof(Stream), type.MakeByRefType() });
-			mb.DefineParameter(1, ParameterAttributes.None, "serializer");
-			mb.DefineParameter(2, ParameterAttributes.None, "stream");
-			mb.DefineParameter(3, ParameterAttributes.Out, "value");
-			return mb;
-		}
-#endif
-
-		/// <summary>
-		/// Create delegate that calls writer either directly, or via a trampoline
-		/// </summary>
-		public static Delegate CreateSerializeDelegate(Type paramType, TypeData data)
-		{
-			Type writerType = data.Type;
-
-			if (paramType != writerType && paramType != typeof(object))
-				throw new Exception();
-
-			bool needTypeConv = paramType != writerType;
-			bool needsInstanceParameter = data.WriterNeedsInstance;
-
-			var delegateType = typeof(SerializeDelegate<>).MakeGenericType(paramType);
-
-			// Can we call the writer directly?
-
-			if (!needTypeConv && needsInstanceParameter)
-			{
-				var dynamicWriter = data.WriterMethodInfo as DynamicMethod;
-
-				if (dynamicWriter != null)
-					return dynamicWriter.CreateDelegate(delegateType);
-				else
-					return Delegate.CreateDelegate(delegateType, data.WriterMethodInfo);
-			}
-
-			// Create a trampoline
-
-			var wrapper = Helpers.GenerateDynamicSerializerStub(paramType);
-			var il = wrapper.GetILGenerator();
-
-			if (needsInstanceParameter)
-				il.Emit(OpCodes.Ldarg_0);
-
-			il.Emit(OpCodes.Ldarg_1);
-			il.Emit(OpCodes.Ldarg_2);
-			if (needTypeConv)
-				il.Emit(writerType.IsValueType ? OpCodes.Unbox_Any : OpCodes.Castclass, writerType);
-
-			// XXX tailcall causes slowdowns with large valuetypes
-			//il.Emit(OpCodes.Tailcall);
-			il.Emit(OpCodes.Call, data.WriterMethodInfo);
-
-			il.Emit(OpCodes.Ret);
-
-			return wrapper.CreateDelegate(delegateType);
+			return expr.Type == targetType ? expr : Expression.Convert(expr, targetType);
 		}
 
 		/// <summary>
-		/// Create delegate that calls reader either directly, or via a trampoline
+		/// Build an expression that invokes the (possibly not-yet-generated) typed writer
+		/// of the given TypeData. The delegate is loaded from the TypeData field at
+		/// invocation time, so recursive/mutually-recursive type graphs work.
 		/// </summary>
-		public static Delegate CreateDeserializeDelegate(Type paramType, TypeData data)
+		public static Expression InvokeWriter(TypeData data, Expression serializer, Expression stream, Expression value)
 		{
-			Type readerType = data.Type;
+			var delType = GetWriterDelegateType(data.Type);
 
-			if (paramType != readerType && paramType != typeof(object))
-				throw new Exception();
+			var delExpr = Expression.Convert(
+				Expression.Field(Expression.Constant(data), nameof(TypeData.WriterDelegate)),
+				delType);
 
-			bool needTypeConv = paramType != readerType;
-			bool needsInstanceParameter = data.ReaderNeedsInstance;
+			return Expression.Invoke(delExpr, serializer, stream, ConvertIfNeeded(value, data.Type));
+		}
 
-			var delegateType = typeof(DeserializeDelegate<>).MakeGenericType(paramType);
+		/// <summary>
+		/// Build an expression that invokes the typed reader of the given TypeData and
+		/// converts the result to wantedType.
+		/// </summary>
+		public static Expression InvokeReader(TypeData data, Expression serializer, Expression stream, Type wantedType)
+		{
+			var delType = GetReaderDelegateType(data.Type);
 
-			// Can we call the reader directly?
+			var delExpr = Expression.Convert(
+				Expression.Field(Expression.Constant(data), nameof(TypeData.ReaderDelegate)),
+				delType);
 
-			if (!needTypeConv && needsInstanceParameter)
+			Expression call = Expression.Invoke(delExpr, serializer, stream);
+
+			return ConvertIfNeeded(call, wantedType);
+		}
+
+		/// <summary>
+		/// Write a value of the given static type, routing through the object serializer
+		/// (type-id prefix) when the type cannot be called directly (polymorphism / null).
+		/// </summary>
+		public static Expression WriteValue(Serializer serializer, Type valueType, Expression serializerExpr, Expression stream, Expression value)
+		{
+			var data = serializer.GetIndirectData(valueType);
+			return InvokeWriter(data, serializerExpr, stream, value);
+		}
+
+		/// <summary>
+		/// Read a value of the given static type (see WriteValue).
+		/// </summary>
+		public static Expression ReadValue(Serializer serializer, Type valueType, Expression serializerExpr, Expression stream)
+		{
+			var data = serializer.GetIndirectData(valueType);
+			return InvokeReader(data, serializerExpr, stream, valueType);
+		}
+
+		/// <summary>
+		/// Wrap a static writer method into a SerializeDelegate&lt;type&gt;.
+		/// Supported method shapes: (Stream, T) and (Serializer, Stream, T).
+		/// </summary>
+		public static Delegate WrapStaticWriter(Type type, MethodInfo mi)
+		{
+			if (mi == null)
+				throw new ArgumentNullException(nameof(mi));
+
+			var s = Expression.Parameter(typeof(Serializer), "serializer");
+			var st = Expression.Parameter(typeof(Stream), "stream");
+			var v = Expression.Parameter(type, "value");
+
+			var ps = mi.GetParameters();
+
+			Expression valueArg = ConvertIfNeeded(v, ps[ps.Length - 1].ParameterType);
+
+			Expression call;
+			if (ps.Length == 3)
+				call = Expression.Call(mi, s, st, valueArg);
+			else if (ps.Length == 2)
+				call = Expression.Call(mi, st, valueArg);
+			else
+				throw new NotSupportedException(String.Format("Unsupported static writer shape: {0}.{1}", mi.DeclaringType, mi.Name));
+
+			return Expression.Lambda(GetWriterDelegateType(type), call, s, st, v).Compile();
+		}
+
+		/// <summary>
+		/// Wrap a static reader method into a DeserializeDelegate&lt;type&gt;.
+		/// Supported method shapes:
+		///   void (Stream, out T) / void (Serializer, Stream, out T)
+		///   T (Stream)           / T (Serializer, Stream)
+		/// </summary>
+		public static Delegate WrapStaticReader(Type type, MethodInfo mi)
+		{
+			if (mi == null)
+				throw new ArgumentNullException(nameof(mi));
+
+			var s = Expression.Parameter(typeof(Serializer), "serializer");
+			var st = Expression.Parameter(typeof(Stream), "stream");
+
+			var ps = mi.GetParameters();
+
+			Expression body;
+
+			if (mi.ReturnType != typeof(void))
 			{
-				var dynamicReader = data.ReaderMethodInfo as DynamicMethod;
-
-				if (dynamicReader != null)
-					return dynamicReader.CreateDelegate(delegateType);
+				Expression call;
+				if (ps.Length == 2)
+					call = Expression.Call(mi, s, st);
+				else if (ps.Length == 1)
+					call = Expression.Call(mi, st);
 				else
-					return Delegate.CreateDelegate(delegateType, data.ReaderMethodInfo);
-			}
+					throw new NotSupportedException(String.Format("Unsupported static reader shape: {0}.{1}", mi.DeclaringType, mi.Name));
 
-			// Create a trampoline
-
-			var wrapper = GenerateDynamicDeserializerStub(paramType);
-			var il = wrapper.GetILGenerator();
-
-			if (needsInstanceParameter)
-				il.Emit(OpCodes.Ldarg_0);
-
-			if (needTypeConv && readerType.IsValueType)
-			{
-				var local = il.DeclareLocal(readerType);
-
-				il.Emit(OpCodes.Ldarg_1);
-				il.Emit(OpCodes.Ldloca_S, local);
-
-				il.Emit(OpCodes.Call, data.ReaderMethodInfo);
-
-				// write result object to out object
-				il.Emit(OpCodes.Ldarg_2);
-				il.Emit(OpCodes.Ldloc_0);
-				il.Emit(OpCodes.Box, readerType);
-				il.Emit(OpCodes.Stind_Ref);
+				body = ConvertIfNeeded(call, type);
 			}
 			else
 			{
-				il.Emit(OpCodes.Ldarg_1);
-				il.Emit(OpCodes.Ldarg_2);
+				var byRefType = ps[ps.Length - 1].ParameterType;
 
-				// XXX tailcall causes slowdowns with large valuetypes
-				//il.Emit(OpCodes.Tailcall);
-				il.Emit(OpCodes.Call, data.ReaderMethodInfo);
+				if (!byRefType.IsByRef)
+					throw new NotSupportedException(String.Format("Unsupported static reader shape: {0}.{1}", mi.DeclaringType, mi.Name));
+
+				var elemType = byRefType.GetElementType();
+				var tmp = Expression.Variable(elemType, "tmp");
+
+				Expression call;
+				if (ps.Length == 3)
+					call = Expression.Call(mi, s, st, tmp);
+				else if (ps.Length == 2)
+					call = Expression.Call(mi, st, tmp);
+				else
+					throw new NotSupportedException(String.Format("Unsupported static reader shape: {0}.{1}", mi.DeclaringType, mi.Name));
+
+				body = Expression.Block(new[] { tmp }, call, ConvertIfNeeded(tmp, type));
 			}
 
-			il.Emit(OpCodes.Ret);
+			return Expression.Lambda(GetReaderDelegateType(type), body, s, st).Compile();
+		}
 
-			return wrapper.CreateDelegate(delegateType);
+		/// <summary>
+		/// Trampoline used by ObjectSerializer: (Serializer, Stream, object) -> cast -> typed writer
+		/// </summary>
+		public static SerializeDelegate<object> CreateWriterTrampoline(TypeData data)
+		{
+			if (data.Type == typeof(object))
+				return (SerializeDelegate<object>)data.WriterDelegate;
+
+			var s = Expression.Parameter(typeof(Serializer), "serializer");
+			var st = Expression.Parameter(typeof(Stream), "stream");
+			var o = Expression.Parameter(typeof(object), "value");
+
+			var body = InvokeWriter(data, s, st, o);
+
+			return Expression.Lambda<SerializeDelegate<object>>(body, s, st, o).Compile();
+		}
+
+		/// <summary>
+		/// Trampoline used by ObjectSerializer: typed reader -> boxed object
+		/// </summary>
+		public static DeserializeDelegate<object> CreateReaderTrampoline(TypeData data)
+		{
+			if (data.Type == typeof(object))
+				return (DeserializeDelegate<object>)data.ReaderDelegate;
+
+			var s = Expression.Parameter(typeof(Serializer), "serializer");
+			var st = Expression.Parameter(typeof(Stream), "stream");
+
+			var body = InvokeReader(data, s, st, typeof(object));
+
+			return Expression.Lambda<DeserializeDelegate<object>>(body, s, st).Compile();
 		}
 	}
 }

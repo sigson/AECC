@@ -1,6 +1,6 @@
-﻿/*
+/*
  * Copyright 2015 Tomi Valkeinen
- * 
+ *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -9,7 +9,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 
 namespace NetSerializer
@@ -58,26 +57,20 @@ namespace NetSerializer
 			del(serializer, stream, ob);
 		}
 
-		public static void Deserialize(Serializer serializer, Stream stream, out object ob)
+		public static object Deserialize(Serializer serializer, Stream stream)
 		{
 			uint id;
 
 			Primitives.ReadPrimitive(stream, out id);
 
 			if (id == 0)
-			{
-				ob = null;
-				return;
-			}
+				return null;
 
 			if (id == Serializer.ObjectTypeId)
-			{
-				ob = new object();
-				return;
-			}
+				return new object();
 
 			var del = serializer.GetDeserializeTrampolineFromId(id);
-			del(serializer, stream, out ob);
+			return del(serializer, stream);
 		}
 	}
 }

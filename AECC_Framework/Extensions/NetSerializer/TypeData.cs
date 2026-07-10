@@ -1,14 +1,12 @@
-﻿/*
+/*
  * Copyright 2015 Tomi Valkeinen
- * 
+ *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 using System;
-using System.Reflection;
-using System.Reflection.Emit;
 
 namespace NetSerializer
 {
@@ -26,54 +24,30 @@ namespace NetSerializer
 
 		public ITypeSerializer TypeSerializer { get; private set; }
 
-		public MethodInfo WriterMethodInfo;
-		public MethodInfo ReaderMethodInfo;
+		/// <summary>
+		/// Typed writer: SerializeDelegate&lt;Type&gt;.
+		/// Read lazily (via a field load) from generated expressions, which makes
+		/// mutually recursive type graphs work without a stub/body two-phase pass.
+		/// </summary>
+		public Delegate WriterDelegate;
+
+		/// <summary>
+		/// Typed reader: DeserializeDelegate&lt;Type&gt;
+		/// </summary>
+		public Delegate ReaderDelegate;
 
 		public SerializeDelegate<object> WriterTrampolineDelegate;
-		public Delegate WriterDirectDelegate;
-
 		public DeserializeDelegate<object> ReaderTrampolineDelegate;
-		public Delegate ReaderDirectDelegate;
-
-		public bool WriterNeedsInstance
-		{
-			get
-			{
-#if GENERATE_DEBUGGING_ASSEMBLY
-				if (this.WriterMethodInfo is MethodBuilder)
-					return this.WriterNeedsInstanceDebug;
-#endif
-				return this.WriterMethodInfo.GetParameters().Length == 3;
-			}
-		}
-
-		public bool ReaderNeedsInstance
-		{
-			get
-			{
-#if GENERATE_DEBUGGING_ASSEMBLY
-				if (this.ReaderMethodInfo is MethodBuilder)
-					return this.ReaderNeedsInstanceDebug;
-#endif
-				return this.ReaderMethodInfo.GetParameters().Length == 3;
-			}
-		}
-
-#if GENERATE_DEBUGGING_ASSEMBLY
-		// MethodBuilder doesn't support GetParameters(), so we need to track this separately
-		public bool WriterNeedsInstanceDebug;
-		public bool ReaderNeedsInstanceDebug;
-#endif
 
 		public bool CanCallDirect
 		{
 			get
 			{
-				// We can call the (De)serializer method directly for:
+				// We can call the (de)serializer delegate directly for:
 				// - Value types
 				// - Array types
-				// - Sealed types with static (De)serializer method, as the method will handle null
-				// Other types go through the ObjectSerializer
+				// - Sealed types with a static (de)serializer method, as the method will handle null
+				// Other types go through the ObjectSerializer (to support polymorphism and null)
 
 				var type = this.Type;
 

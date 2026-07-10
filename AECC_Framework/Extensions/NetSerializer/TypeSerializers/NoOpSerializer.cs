@@ -1,6 +1,6 @@
-﻿/*
+/*
  * Copyright 2015 Tomi Valkeinen
- * 
+ *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -16,7 +16,7 @@ namespace NetSerializer
 {
 	/// <summary>
 	/// A "no-op" TypeSerializer which can be used to make the NetSerializer ignore fields of certain type.
-	/// For example, Delegates cannot be serializer by default, and NoOpSerializer could be used to ignore all subclasses of Delegate
+	/// For example, Delegates cannot be serialized by default, and NoOpSerializer could be used to ignore all subclasses of Delegate
 	/// </summary>
 	sealed class NoOpSerializer : IStaticTypeSerializer
 	{
@@ -56,9 +56,9 @@ namespace NetSerializer
 		{
 		}
 
-		public static void Deserialize(Serializer serializer, Stream stream, out object ob)
+		public static object Deserialize(Serializer serializer, Stream stream)
 		{
-			ob = null;
+			return null;
 		}
 	}
 }
