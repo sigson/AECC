@@ -79,10 +79,16 @@ namespace AECC.Serialization
                 //using (this.StabilizationLocker.ReadLock())//lock (this.serializationLocker)
                 {
                     Dictionary<long, byte[]> slicedComponents = new Dictionary<long, byte[]>();
-                    var cacheSerializationContainerKeys = s.SerializationContainer.Keys.ToList();
-                    foreach (var pairComponentKey in cacheSerializationContainerKeys)
+                    // ОПТИМИЗАЦИЯ ПАМЯТИ: зеркало SerializationContainer упразднено — полный
+                    // срез читается напрямую из живого Store (ключ ТОТ ЖЕ: typeUid ==
+                    // component.GetId()). Дисциплина та же, что и в changed-ветке выше:
+                    // снапшот ключей + ExecuteReadLocked по каждому. Лок теперь берётся на
+                    // РЕАЛЬНОЙ ячейке компонента (а не на ячейке зеркала), т.е. срез
+                    // корректнее прежнего исключается с мутациями компонента.
+                    var cacheStoreKeys = s.Store.Keys.ToList();
+                    foreach (var pairComponentKey in cacheStoreKeys)
                     {
-                        s.SerializationContainer.ExecuteReadLocked(pairComponentKey, (key, pairComponent) => { 
+                        s.Store.ExecuteReadLocked(pairComponentKey, (key, pairComponent) => { 
                             using (MemoryStream writer = new MemoryStream())
                             {
                                 if (!(pairComponent as ECSComponent).Unregistered)
@@ -136,9 +142,11 @@ namespace AECC.Serialization
             }
             else
             {
-                foreach (var changedComponent in s.SerializationContainer)
+                // ОПТИМИЗАЦИЯ ПАМЯТИ: полный проход — по живому Store (зеркало упразднено;
+                // ключ идентичен: typeUid == component.GetId()).
+                foreach (var changedComponent in s.Store)
                 {
-                    serializeContainer[changedComponent.Key] = serializationAdapter.SerializeECSComponent(changedComponent.Value as ECSComponent);
+                    serializeContainer[changedComponent.Key] = serializationAdapter.SerializeECSComponent(changedComponent.Value);
                 }
             }
             if (clearChanged)
@@ -146,12 +154,21 @@ namespace AECC.Serialization
             return serializeContainer;
         }
 
-        public static void DeserializeStorage(this EntityComponentStorage s, ISerializationAdapter serializationAdapter, Dictionary<long, byte[]> serializedComponents)
+        /// <summary>
+        /// Распаковка компонентов пакета. ОПТИМИЗАЦИЯ ПАМЯТИ (финальный шаг упразднения
+        /// зеркала): бывший пер-сущностный SerializationContainer полностью удалён из
+        /// кодовой базы — распакованные компоненты ТРАНЗИТНЫ (живут в пределах одного
+        /// вызова сериализатора: распаковка → перенос в живой Store), поэтому буфер
+        /// возвращается ЛОКАЛЬНЫМ словарём, а не хранится в состоянии сущности.
+        /// </summary>
+        public static Dictionary<long, ECSComponent> DeserializeStorage(this EntityComponentStorage s, ISerializationAdapter serializationAdapter, Dictionary<long, byte[]> serializedComponents)
         {
+            var landed = new Dictionary<long, ECSComponent>(serializedComponents.Count);
             foreach (var serComponent in serializedComponents)
             {
-                s.SerializationContainer[serComponent.Key] = (ECSComponent)serializationAdapter.DeserializeECSComponent(serComponent.Value, serComponent.Key);
+                landed[serComponent.Key] = (ECSComponent)serializationAdapter.DeserializeECSComponent(serComponent.Value, serComponent.Key);
             }
+            return landed;
         }
 
     }

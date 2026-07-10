@@ -21,7 +21,7 @@ namespace AECC.Locking
     /// so <c>ref cell.Lock</c> remains valid while a lock is held.
     ///
     /// This is the recommended vehicle for the WORLD-LEVEL dictionaries (EntityStorage,
-    /// childECSObjects, PreinitializedEntities, SerializationContainer). For the hottest
+    /// childECSObjects, PreinitializedEntities). For the hottest
     /// per-entity component set, see <see cref="ComponentBag{TValue}"/> which removes the node too.
     /// </summary>
     public sealed class LockedDictionarySlim<TKey, TValue> : LockHost, IEnumerable<KeyValuePair<TKey, TValue>>

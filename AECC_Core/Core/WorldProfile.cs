@@ -21,8 +21,8 @@ namespace AECC.Core
     {
         public readonly ECSWorld.WorldTypeEnum Kind;
 
-        /// <summary>Вести сериализационные зеркала (SerializationContainer, RemovedComponents,
-        /// fastEntityComponentsId). Бывш. вырожденное тройное условие == !Defines.Cut...</summary>
+        /// <summary>Вести сериализационные зеркала (RemovedComponents, fastEntityComponentsId;
+        /// бывш. также SerializationContainer — удалён, оптимизация памяти). Бывш. вырожденное тройное условие == !Defines.Cut...</summary>
         public readonly bool MaintainsSerializationMirrors;
 
         /// <summary>Создавать коллекции политик доступа в конструкторе сущности.

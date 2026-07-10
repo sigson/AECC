@@ -141,9 +141,13 @@ namespace AECC.Core
             }
 
             // Приход сущности — событие для слива отложенной десериализации
-            // (событийная замена ретрай-таймеров). Асинхронно, чтобы не исполнять
-            // повторные попытки (берущие SerialLocker) внутри стека прихода.
-            TaskEx.RunAsync(() => this.PendingDeserialization.Drain());
+            // (событийная замена ретрай-таймеров). RequestDrain: при пустом реестре —
+            // ноль аллокаций и ноль work item'ов; при непустом — коалесцированный
+            // асинхронный слив (не более одного дрейнера), так что повторные попытки
+            // (берущие SerialLocker) по-прежнему НЕ исполняются внутри стека прихода.
+            // ВАЖНО: вызов идёт после публикации сущности в репозитории (см. протокол
+            // двойных проверок в PendingDeserializationRegistry).
+            this.PendingDeserialization.RequestDrain();
         }
 
         // --- ЛОГИКА УДАЛЕНИЯ И ПЕРЕПОДЧИНЕНИЯ ---
@@ -160,7 +164,14 @@ namespace AECC.Core
             InternalGraphRemoval(entity);
 
             entity.OnDelete();
-            TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityDestroyed(entity); });
+            // Гейт пустых контрактных реакций: при пустых контрактных базах прежний
+            // безусловный вызов не только аллоцировал work item, но и стабильно логировал
+            // ложный "core system error" (cleared никогда не выставлялся на пустом
+            // TimeDependContractEntityDatabase).
+            if (this.world.contractsManager.HasEntityReactions(entity.instanceId))
+            {
+                TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityDestroyed(entity); });
+            }
         }
 
         private void InternalGraphRemoval(ECSEntity Entity)
@@ -224,11 +235,19 @@ namespace AECC.Core
 
             // ФАЗА 5: метрика — событие индексу (числовой ключ вместо $"Comp:{id}" — дефект 6.6).
             if (Entity != null) QueryIndex?.OnComponentAdded(Entity, Component);
-            TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityComponentAddedReaction(Entity, Component); });
+            // ОПТИМИЗАЦИЯ ПАМЯТИ (work-item flood): контрактная реакция планируется в пул
+            // ТОЛЬКО если контрактной машинерии есть на что реагировать. Прежде на КАЖДОЕ
+            // добавление компонента в очередь пула уходило замыкание (DisplayClass + Action +
+            // WaitCallback), которое при пустых контрактных базах итерировало пустые словари.
+            if (Entity != null && this.world.contractsManager.HasEntityReactions(Entity.instanceId))
+            {
+                TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityComponentAddedReaction(Entity, Component); });
+            }
 
             // Приход компонента — тоже событие для слива отложенной десериализации
-            // (на случай, когда владелец-ссылка — компонент, добавленный к уже существующей сущности).
-            TaskEx.RunAsync(() => this.PendingDeserialization.Drain());
+            // (на случай, когда владелец-ссылка — компонент, добавленный к уже существующей
+            // сущности). Гейт пустого реестра + коалесинг — внутри RequestDrain.
+            this.PendingDeserialization.RequestDrain();
         }
 
         public void OnRemoveComponent(ECSEntity Entity, ECSComponent Component)
@@ -241,7 +260,11 @@ namespace AECC.Core
             }
 
             if (Entity != null) QueryIndex?.OnComponentRemoved(Entity, Component);
-            TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityComponentRemovedReaction(Entity, Component); });
+            // Гейт пустых контрактных реакций — симметрично OnAddComponent.
+            if (Entity != null && this.world.contractsManager.HasEntityReactions(Entity.instanceId))
+            {
+                TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityComponentRemovedReaction(Entity, Component); });
+            }
         }
 
         // --- ЭЛЕГАНТНЫЙ ПОИСК ПО ГРАФУ ---

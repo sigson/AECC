@@ -54,6 +54,21 @@ namespace AECC.Extensions.ThreadingSync
 #endif
         }
 
+        /// <summary>Единственный на процесс делегат исполнения action-as-state для
+        /// ThreadPool-ветки RunAsync (см. комментарий в теле): try/catch-семантика
+        /// дословно прежняя, но без пер-вызовных замыканий.</summary>
+        private static readonly WaitCallback RunActionFromState = state =>
+        {
+            try
+            {
+                ((Action)state)();
+            }
+            catch (Exception ex)
+            {
+                NLogger.ErrorThread(ex);
+            }
+        };
+
         public static void RunAsync(Action action, bool forceThreadmode = false, bool forceAsync = false)
         {
 #if UNITY_5_3_OR_NEWER
@@ -85,17 +100,12 @@ namespace AECC.Extensions.ThreadingSync
             {
                 if ((Defines.ThreadsMode || forceThreadmode) && !forceAsync)
                 {
-                    ThreadPool.QueueUserWorkItem(_ => // Используем '_' , чтобы показать, что 'state' нам не нужен
-                    {
-                        try
-                        {
-                            action();
-                        }
-                        catch (Exception ex)
-                        {
-                            NLogger.ErrorThread(ex);
-                        }
-                    });
+                    // ОПТИМИЗАЦИЯ ПАМЯТИ (work-item flood): прежняя лямбда-обёртка
+                    // `_ => { try { action(); } ... }` захватывала action и на КАЖДЫЙ вызов
+                    // аллоцировала DisplayClass + Action + WaitCallback (в снапшоте — по ~4M
+                    // каждого). Теперь action передаётся как state в ЕДИНСТВЕННЫЙ кэшированный
+                    // WaitCallback — на вызов остаётся только внутренний work item рантайма.
+                    ThreadPool.QueueUserWorkItem(RunActionFromState, action);
                     // Thread thread = new Thread(() =>
                     // {
                     //     try

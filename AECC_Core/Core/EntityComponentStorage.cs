@@ -69,11 +69,12 @@ namespace AECC.Core
 
         internal IDictionary<Type, int> changedComponents { get { return SerState.ChangedComponents; } }
 
-        public LockedDictionarySlim<long, object> SerializationContainer
-        {
-            get { return SerState.SerializationContainer; }
-            set { SerState.SerializationContainer = value; }
-        }
+        // ОПТИМИЗАЦИЯ ПАМЯТИ (санкционированный breaking): пер-сущностный
+        // SerializationContainer УДАЛЁН ПОЛНОСТЬЮ. Живое зеркало дублировало Store
+        // (полносрезная сериализация читает Store напрямую — StorageSerializationPipeline),
+        // а транзитный буфер десериализации стал локальным словарём
+        // (DeserializeStorage возвращает его, RestoreComponentsAfterSerialization /
+        // UpdateDeserialize принимают параметром).
 
         [IgnoreDataMember]
         public List<long> RemovedComponents
@@ -131,22 +132,28 @@ namespace AECC.Core
         // адаптер-независимые части пайплайна: RestoreComponentsAfterSerialization и
         // FilterRemovedComponents (компайл-чисты; владение модулем мигрирует позже).
 
-        public void RestoreComponentsAfterSerialization(ECSEntity entity)
+        /// <summary>
+        /// Перенос распакованных компонентов (результат DeserializeStorage) в живой Store
+        /// пустой сущности + пересадка сериализационного состояния носителя. ОПТИМИЗАЦИЯ
+        /// ПАМЯТИ (санкционированный breaking сигнатуры): буфер приходит ПАРАМЕТРОМ —
+        /// пер-сущностный SerializationContainer упразднён полностью.
+        /// </summary>
+        public void RestoreComponentsAfterSerialization(ECSEntity entity, Dictionary<long, ECSComponent> deserializedComponents)
         {
             // Пересадка владельца: state НОСИТЕЛЯ кладётся в слот НОВОЙ сущности
             // (данные принадлежат сущности; десериализованный носитель отдаёт их ей).
             // ВАЖЕН ПОРЯДОК: state резолвится ДО переключения this.entity — иначе ленивый
             // SerState-геттер (при холодном кэше) создал бы СВЕЖИЙ state уже на целевой
-            // сущности, молча теряя dirty/removed/зеркало носителя. Дефект шага 1, пойман
+            // сущности, молча теряя dirty/removed носителя. Дефект шага 1, пойман
             // первым реальным прогоном сетки (тест «пересадка state» ранее не запускался).
             var st = SerState;   // state носителя (this.entity ещё старый)
             this.entity = entity;
             entity.serializationState = st;
             _serState = st;
-            if (Store.Count == 0)
+            if (Store.Count == 0 && deserializedComponents != null)
             {
                 List<ECSComponent> afterDeser = new List<ECSComponent>();
-                foreach (var objPair in SerializationContainer)
+                foreach (var objPair in deserializedComponents)
                 {
                     ECSComponent objComponent = (ECSComponent)objPair.Value;
                     Type component;
@@ -259,13 +266,10 @@ namespace AECC.Core
                 NLogger.LogError("null owner entity");
             }
 
-            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
-            {
-                if (restoringMode)
-                    this.SerializationContainer.TryAdd(component.GetId(), component);
-                else
-                    this.SerializationContainer[component.GetId()] = component;
-            }
+            // ОПТИМИЗАЦИЯ ПАМЯТИ: ведение живого зеркала SerializationContainer упразднено —
+            // компонент уже лежит в живом Store под тем же ключом typeUid, полносрезная
+            // сериализация читает Store напрямую. (Посадочный буфер десериализации
+            // наполняет только DeserializeStorage.)
             component.ECSWorldOwner?.entityManager.OnAddComponent(this.entity, component);
         }
 
@@ -430,7 +434,7 @@ namespace AECC.Core
             this.changedComponents.Remove(componentClass, out _);
             if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
-                this.SerializationContainer.Remove(component.GetId(), out _);
+                // ОПТИМИЗАЦИЯ ПАМЯТИ: изъятие из живого зеркала упразднено вместе с зеркалом.
                 this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
                 this.RemovedComponents.Add(component.GetId());
             }
@@ -485,7 +489,7 @@ namespace AECC.Core
                             this.Store.RemoveRaw(removedComponent.GetId());
                             if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
                             {
-                                this.SerializationContainer.Remove(removedComponent.GetId(), out _);
+                                // ОПТИМИЗАЦИЯ ПАМЯТИ: изъятие из живого зеркала упразднено вместе с зеркалом.
                                 this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
                                 this.RemovedComponents.Add(removedComponent.GetId());
                             }
@@ -737,7 +741,7 @@ namespace AECC.Core
             // и от компонентов, которых не оказалось в основном словаре.
             if (WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
             {
-                this.SerializationContainer.Clear();
+                // SerializationContainer удалён полностью — чистить больше нечего.
                 this.RemovedComponents.Clear();
             }
 

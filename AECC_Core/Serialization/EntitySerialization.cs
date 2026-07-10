@@ -82,8 +82,9 @@ namespace AECC.Serialization
             public byte[] Entity;
             [System.NonSerialized]
             public ECSEntity desEntity = null;
-            [System.NonSerialized]
-            public DictionaryWrapper<long, ECSComponent> SerializationContainer = new DictionaryWrapper<long, ECSComponent>();
+            // ОПТИМИЗАЦИЯ ПАМЯТИ: [NonSerialized]-поле SerializationContainer и его
+            // единственный писатель DeserializeComponents() удалены — метод никем не
+            // вызывался, а DictionaryWrapper жадно аллоцировался на КАЖДЫЙ входящий пакет.
             public Dictionary<long, byte[]> Components = new Dictionary<long, byte[]>();
 
             public ISerializationAdapter adapter;
@@ -98,14 +99,6 @@ namespace AECC.Serialization
             public void DeserializeEntity()
             {
                 desEntity = adapter.DeserializeECSEntity(this.Entity);
-            }
-
-            public void DeserializeComponents()
-            {
-                foreach (var sComp in Components)
-                {
-                    SerializationContainer[sComp.Key] = adapter.DeserializeECSComponent(sComp.Value, sComp.Key);
-                }
             }
         }
         #endregion

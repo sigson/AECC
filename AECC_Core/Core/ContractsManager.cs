@@ -171,6 +171,24 @@ namespace AECC.Core
                 TryExecuteContracts(new List<ECSExecutableContractContainer>{ contract });
         }
 
+        /// <summary>
+        /// Дешёвый гейт для ECSEntityManager (оптимизация памяти, work-item flood):
+        /// «есть ли контрактной машинерии на что реагировать для этой сущности».
+        /// Точная верхняя оценка тел OnEntityComponentAdded/Removed/Destroyed/Created:
+        /// они итерируют TimeDependContractEntityDatabase и лукапят
+        /// AwaitingContractDatabase[entityId] — при пустом первом и промахе второго
+        /// каждое из тел гарантированно no-op (не считая ложного error-лога в
+        /// OnEntityDestroyed, который этим гейтом как раз устраняется).
+        /// Ложноположительный ответ безопасен (запланируется прежний вызов),
+        /// ложноотрицательный невозможен: обе структуры пополняются ДО того, как
+        /// контракты начинают ожидать реакций (AddContract/RegisterTimeDepend).
+        /// </summary>
+        public bool HasEntityReactions(long entityInstanceId)
+        {
+            if (this.TimeDependContractEntityDatabase.Count > 0) return true;
+            return this.AwaitingContractDatabase.ContainsKey(entityInstanceId);
+        }
+
         public void OnEntityComponentAddedReaction(ECSEntity entity, ECSComponent component)
         {
             // ФАЗА 6 / остаток фазы 5 (слияние 1.10): ведение обратного индекса уехало в

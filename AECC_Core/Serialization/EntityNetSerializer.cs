@@ -162,8 +162,9 @@ namespace AECC.Serialization
             bufEntity.DeserializeEntity();
 
             storage = bufEntity.desEntity.entityComponents;
-            storage.DeserializeStorage(serializationAdapter, bufEntity.Components);
-            storage.RestoreComponentsAfterSerialization(bufEntity.desEntity);
+            // Транзитный буфер распаковки — локальный (SerializationContainer удалён).
+            var landedComponents = storage.DeserializeStorage(serializationAdapter, bufEntity.Components);
+            storage.RestoreComponentsAfterSerialization(bufEntity.desEntity, landedComponents);
             bufEntity.desEntity.fastEntityComponentsId = new Dictionary<long, int>(bufEntity.desEntity.entityComponents.Components.ToDictionary(k => k.instanceId, t => 0));
             bufEntity.desEntity.AfterDeserialization();
             return bufEntity.desEntity;
@@ -204,11 +205,12 @@ namespace AECC.Serialization
                 // под прежним монитором.
                 using (candidate.entityComponents.StabilizationGate.WriteLock())
                 {
-                    storage.DeserializeStorage(serializationAdapter, bufEntity.Components);
+                    // Транзитный буфер распаковки — локальный (SerializationContainer удалён).
+                    var landedCandidate = storage.DeserializeStorage(serializationAdapter, bufEntity.Components);
                     if (ecsWorld.entityManager.AddNewEntity(candidate, true))
                     {
                         entity = candidate;
-                        storage.RestoreComponentsAfterSerialization(entity);
+                        storage.RestoreComponentsAfterSerialization(entity, landedCandidate);
                         entity.fastEntityComponentsId = new Dictionary<long, int>(entity.entityComponents.Components.ToDictionary(k => k.instanceId, t => 0));
                         entity.AfterDeserialization();
 
@@ -233,7 +235,8 @@ namespace AECC.Serialization
 
             using (entity.entityComponents.StabilizationGate.WriteLock())
             {
-                bufEntity.desEntity.entityComponents.DeserializeStorage(serializationAdapter, bufEntity.Components);
+                // Транзитный буфер распаковки — локальный (SerializationContainer удалён).
+                var landedUpdate = bufEntity.desEntity.entityComponents.DeserializeStorage(serializationAdapter, bufEntity.Components);
 
                 // ТЗ 4.7: «клиент фильтрует Server-группу и наоборот» — маппинг «какая
                 // группа чужая» уехал в профиль (RestoreFilterForeignGroupId, идея 1.15);
@@ -243,9 +246,9 @@ namespace AECC.Serialization
 
                 List<ECSComponent> afterDeser = new List<ECSComponent>();
 
-                foreach (var component in bufEntity.desEntity.entityComponents.SerializationContainer)
+                foreach (var component in landedUpdate)
                 {
-                    var tComponent = (ECSComponent)component.Value;
+                    var tComponent = component.Value;
                     if (Defines.LogECSEntitySerializationComponents)
                     {
                         NLogger.Log($"In entity {bufEntity.desEntity.AliasName}:{entity.instanceId} will updated {tComponent.GetType().Name}");
