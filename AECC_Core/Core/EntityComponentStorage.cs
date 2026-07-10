@@ -436,7 +436,8 @@ namespace AECC.Core
             {
                 // ОПТИМИЗАЦИЯ ПАМЯТИ: изъятие из живого зеркала упразднено вместе с зеркалом.
                 this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
-                this.RemovedComponents.Add(component.GetId());
+                if (Defines.TrackRemovedComponents)
+                    this.RemovedComponents.Add(component.GetId());
             }
             
             component.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, component);
@@ -491,7 +492,8 @@ namespace AECC.Core
                             {
                                 // ОПТИМИЗАЦИЯ ПАМЯТИ: изъятие из живого зеркала упразднено вместе с зеркалом.
                                 this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
-                                this.RemovedComponents.Add(removedComponent.GetId());
+                                if (Defines.TrackRemovedComponents)
+                                    this.RemovedComponents.Add(removedComponent.GetId());
                             }
                             
                             removedComponent.ECSWorldOwner?.entityManager.OnRemoveComponent(this.entity, removedComponent);

@@ -142,8 +142,19 @@ namespace AECC.Core
             while (true)
             {
                 long epoch = Interlocked.Read(ref _requests);
-                Drain();
-                Interlocked.Exchange(ref _drainActive, 0);
+                try
+                {
+                    Drain();
+                }
+                finally
+                {
+                    // Флаг снимается ДАЖЕ при падении самого Drain (падения отдельных retry
+                    // гасятся внутри него): иначе исключение (оно уйдёт в catch планировщика
+                    // и будет залогировано) навсегда заклинило бы _drainActive == 1 и реестр
+                    // перестал бы реагировать на события. Следующий RequestDrain после
+                    // сброса штатно перепланирует слив.
+                    Interlocked.Exchange(ref _drainActive, 0);
+                }
 
                 // ДВОЙНАЯ ПРОВЕРКА №2 (сторона дрейнера), уже ПОСЛЕ снятия флага:
                 //  - реестр пуст — сливать нечего, любые новые события пройдут свой гейт;
