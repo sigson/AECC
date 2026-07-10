@@ -13,7 +13,7 @@ namespace AECC
     {
 #if UNITY_5_3_OR_NEWER
         UnityEngine.GameObject gameObject { get; set; }
-#elif NET
+#elif NET || NETSTANDARD2_0_OR_GREATER
         EngineApiObjectBehaviour gameObject { get; set; }
 #endif
         bool enabled { get; set; }

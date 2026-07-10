@@ -62,7 +62,7 @@ namespace AECC.ECS.Types.AtomicType
             };
         }
 #endif
-#if NET && !GODOT
+#if NET || NETSTANDARD2_0_OR_GREATER && !GODOT
         public Vector3 NGetNum()
         {
             return new Vector3()

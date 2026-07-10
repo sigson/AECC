@@ -119,7 +119,7 @@ public abstract
         public abstract void OnDestroyReaction();
 
         public
-#if NET
+#if NET || NETSTANDARD2_0_OR_GREATER
             override
 #endif
               void OnDestroy()

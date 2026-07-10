@@ -170,7 +170,7 @@ namespace AECC.Extensions.ThreadingSync
                 }
                 else
                 {
-#if NET || UNITY || GODOT4
+#if NET || NETSTANDARD2_0_OR_GREATER || UNITY || GODOT4
                     //lockobj = new AsyncReaderWriterLockSlim();
 #else
                     LockDiagnostics.Sink.LockingError("AsyncReaderWriterLockSlim not supported, enable Defines.ThreadsMode or Defines.OneThread");
@@ -451,7 +451,7 @@ namespace AECC.Extensions.ThreadingSync
                 }
                 else
                 {
-    #if NET || UNITY || GODOT4
+    #if NET || NETSTANDARD2_0_OR_GREATER || UNITY || GODOT4
                     //lockobj = new AsyncReaderWriterLockSlim();
     #else
                     LockDiagnostics.Sink.LockingError("AsyncReaderWriterLockSlim not supported, enable Defines.ThreadsMode or Defines.OneThread");
