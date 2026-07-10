@@ -1,5 +1,4 @@
-﻿
-using AECC.Core.Logging;
+﻿using AECC.Core.Logging;
 using AECC.Harness.Model;
 using AECC.Harness.Services;
 using System;
@@ -18,6 +17,7 @@ using System.Linq;
 using System.IO;
 using AECC.Collections;
 using AECC.Core;
+using AECC.Serialization;
 
 namespace AECC.Harness.Services
 {
@@ -50,7 +50,7 @@ namespace AECC.Harness.Services
             {
                 if (WorldDB.TryGetValue(worldId, out var world))
                 {
-                    if (world.entityManager.EntityStorage.TryGetValue(entityId, out var entity))
+                    if (world.entityManager.TryGetEntitySyncronized(entityId, out var entity))
                     {
                         return (world, entity);
                     }
@@ -66,7 +66,7 @@ namespace AECC.Harness.Services
             }
             foreach (var world in WorldDB.Values)
             {
-                if (world.entityManager.EntityStorage.TryGetValue(entityId, out var entity))
+                if (world.entityManager.TryGetEntitySyncronized(entityId, out var entity))
                 {
                     EntityWorldOwnerCache.TryAdd(entityId, world.instanceId);
                     return (world, entity);
@@ -88,7 +88,7 @@ namespace AECC.Harness.Services
             {
                 if (WorldDB.TryGetValue(worldId, out var world))
                 {
-                    if (world.entityManager.EntityStorage.ContainsKey(entityId))
+                    if (world.entityManager.ContainsEntitySyncronized(entityId))
                     {
                         return world;
                     }
@@ -102,7 +102,7 @@ namespace AECC.Harness.Services
             
             foreach (var world in WorldDB.Values)
             {
-                if (world.entityManager.EntityStorage.ContainsKey(entityId))
+                if (world.entityManager.ContainsEntitySyncronized(entityId))
                 {
                     EntityWorldOwnerCache.TryAdd(entityId, world.instanceId);
                     return world;
@@ -124,6 +124,7 @@ namespace AECC.Harness.Services
                         gworld.instanceId = worldId;
                         WorldDB.TryAdd(worldId, gworld);
                         gworld.InitWorldScope(null);
+                        SerializationBootstrap.Attach(gworld);
                         world = gworld;
                     }
                     return gworld;
@@ -142,6 +143,7 @@ namespace AECC.Harness.Services
             var world = new ECSWorld();
             WorldDB.TryAdd(world.instanceId, world);
             world.InitWorldScope(null);
+            SerializationBootstrap.Attach(world);
             return world;
         }
 
@@ -151,11 +153,12 @@ namespace AECC.Harness.Services
         
         public override void InitializeProcess()
         {
-            ECSWorld.GetWorldAndEntity = GetWorldAndEntity;
-            ECSWorld.GetEntityWorld = GetEntityWorld;
+            // Точка переопределения резолвинга мира — только не-obsolete GetWorld
+            // (create-on-miss). Прочие резолверы больше не подменяются: канон — инстансный
+            // WorldRegistry (ECSWorld.Configure регистрирует туда каждый мир при InitWorldScope).
+            // Монтаж сериализации на мир — в фабриках GetWorld (SerializationBootstrap.Attach);
+            // конкретный адаптер регистрируется слоем AECC_Framework (GlobalProgramState).
             ECSWorld.GetWorld = GetWorld;
-            ECSWorld.GetAllWorlds = () => WorldDB.dictionary.SnapshotI(WorldDB.dictionary);
-            ///////////////////EntitySerialization.InitSerialize();
             //eventManager = new ECSEventManager();
             //eventManager.IdStaticCache();
             //eventManager.InitializeEventManager();

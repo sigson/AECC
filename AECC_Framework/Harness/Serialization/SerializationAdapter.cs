@@ -98,7 +98,7 @@ namespace AECC.Harness.Serialization
             }
             if (Defines.AOTMode)
             {
-                return (ECSComponent)JsonConvert.DeserializeObject(Encoding.UTF8.GetString(component), EntitySerializer.TypeStorage[typeId]);
+                return (ECSComponent)JsonConvert.DeserializeObject(Encoding.UTF8.GetString(component), TypeRegistry.Global.TryGetType(typeId, out var componentType) ? componentType : throw new KeyNotFoundException($"Unknown component typeId {typeId}"));
             }
             else
             {

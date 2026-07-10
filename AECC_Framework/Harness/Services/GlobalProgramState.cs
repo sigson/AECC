@@ -1,5 +1,7 @@
 ﻿using AECC.Harness.Model;
+using AECC.Harness.Serialization;
 using AECC.Network;
+using AECC.Serialization;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -154,6 +156,11 @@ namespace AECC.Harness.Services
         public override void InitializeProcess()
         {
             //ProgramType = ProgramTypeEnum.Server;
+            // Реальный адаптер сериализации живёт в этом слое (AECC_Framework); Core и
+            // AECC_CoreFramework его не видят по ссылкам проектов. Регистрируем фабрику в
+            // bootstrap — её подхватывает SerializationBootstrap.Attach, который вызывает
+            // ECSService при создании мира. Иначе Attach падает на DummySerializationAdapter.
+            SerializationBootstrap.GetSerializationAdapter = () => new SerializationAdapter();
         }
 
         public override void OnDestroyReaction()
