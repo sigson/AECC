@@ -118,8 +118,6 @@ namespace AECC.Extensions
             List<ParameterExpression> variables;
             List<Expression> expressions;
 
-            ///// INITIALIZATION OF EXPRESSIONS AND VARIABLES
-
             InitializeExpressions(type,
                                   out inputParameter,
                                   out inputDictionary,
@@ -129,22 +127,14 @@ namespace AECC.Extensions
                                   out variables,
                                   out expressions);
 
-            ///// RETURN NULL IF ORIGINAL IS NULL
-
             IfNullThenReturnNullExpression(inputParameter, endLabel, expressions);
 
-            ///// MEMBERWISE CLONE ORIGINAL OBJECT
-
             MemberwiseCloneInputToOutputExpression(type, inputParameter, outputVariable, expressions);
-
-            ///// STORE COPIED OBJECT TO REFERENCES DICTIONARY
 
             if (IsClassOtherThanString(type))
             {
                 StoreReferencesIntoDictionaryExpression(inputParameter, inputDictionary, outputVariable, expressions);
             }
-
-            ///// COPY ALL NONVALUE OR NONPRIMITIVE FIELDS
 
             FieldsCopyExpressions(type,
                                   inputParameter,
@@ -152,8 +142,6 @@ namespace AECC.Extensions
                                   outputVariable,
                                   boxingVariable,
                                   expressions);
-
-            ///// COPY ELEMENTS OF ARRAY
 
             if (IsArray(type) && IsTypeToDeepCopy(type.GetElementType()))
             {
@@ -164,8 +152,6 @@ namespace AECC.Extensions
                                               variables,
                                               expressions);
             }
-
-            ///// COMBINE ALL EXPRESSIONS INTO LAMBDA FUNCTION
 
             var lambda = CombineAllIntoLambdaFunctionExpression(inputParameter, inputDictionary, outputVariable, endLabel, variables, expressions);
 
@@ -490,8 +476,6 @@ namespace AECC.Extensions
             var readonlyFields = fields.Where(f => f.IsInitOnly).ToList();
             var writableFields = fields.Where(f => !f.IsInitOnly).ToList();
 
-            ///// READONLY FIELDS COPY (with boxing)
-
             bool shouldUseBoxing = readonlyFields.Any();
 
             if (shouldUseBoxing)
@@ -524,8 +508,6 @@ namespace AECC.Extensions
 
                 expressions.Add(unboxingExpression);
             }
-
-            ///// NOT-READONLY FIELDS COPY
 
             foreach (var field in writableFields)
             {
@@ -574,8 +556,8 @@ namespace AECC.Extensions
 
         private static void ReadonlyFieldToNullExpression(FieldInfo field, ParameterExpression boxingVariable, List<Expression> expressions)
         {
-            // This option must be implemented by Reflection because of the following:
-            // https://visualstudio.uservoice.com/forums/121579-visual-studio-2015/suggestions/2727812-allow-expression-assign-to-set-readonly-struct-f
+            // Readonly fields can't be targeted by Expression.Assign, so SetValue via
+            // reflection is used instead.
 
             ///// Intended code:
             /////
@@ -601,8 +583,8 @@ namespace AECC.Extensions
                                                         ParameterExpression boxingVariable,
                                                         List<Expression> expressions)
         {
-            // This option must be implemented by Reflection (SetValueMethod) because of the following:
-            // https://visualstudio.uservoice.com/forums/121579-visual-studio-2015/suggestions/2727812-allow-expression-assign-to-set-readonly-struct-f
+            // Readonly fields can't be targeted by Expression.Assign, so SetValue via
+            // reflection is used instead.
 
             ///// Intended code:
             /////

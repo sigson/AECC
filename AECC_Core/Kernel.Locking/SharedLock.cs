@@ -7,7 +7,7 @@ namespace AECC.Extensions.ThreadingSync
     public class SharedLock
     {
         /// <summary>
-        /// Токен блокировки, который освобождает Monitor при вызове Dispose.
+        /// Lock token that releases the Monitor when Dispose is called.
         /// </summary>
         public class LockToken : IDisposable
         {
@@ -15,7 +15,7 @@ namespace AECC.Extensions.ThreadingSync
             private readonly bool _single;
             private bool _lockTaken;
 
-            /// <summary>Переходный конструктор: режим из KernelRuntime.DefaultMode в момент захвата.</summary>
+            /// <summary>Uses the concurrency mode currently configured on KernelRuntime.DefaultMode.</summary>
             public LockToken(object lockObj)
                 : this(lockObj, KernelRuntime.DefaultMode)
             {
@@ -29,15 +29,13 @@ namespace AECC.Extensions.ThreadingSync
 
                 try
                 {
-                    // Пытаемся захватить эксклюзивную блокировку
                     if (!_single)
                         Monitor.Enter(_lockObj, ref _lockTaken);
                     else
                         _lockTaken = true;
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
-                    // Здесь можно добавить ваше логирование NLogger.Error(e);
                     throw;
                 }
             }
@@ -56,15 +54,12 @@ namespace AECC.Extensions.ThreadingSync
                         else
                             _lockTaken = false;
                     }
-                    catch (SynchronizationLockException e)
+                    catch (SynchronizationLockException)
                     {
-                        // Попытка освободить лок, которым поток не владеет
-                        // NLogger.Error($"Error exiting lock: {e.Message}");
                         throw;
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
-                        // NLogger.Error(e);
                         throw;
                     }
                 }
@@ -73,19 +68,14 @@ namespace AECC.Extensions.ThreadingSync
             public void Dispose() => ExitLock();
         }
 
-        // Объект, на котором происходит блокировка (SyncRoot)
+        // The object the lock is taken on (SyncRoot).
         public readonly object LockObject;
 
-        /// <summary>
-        /// Конструктор.
-        /// Если передан existingLockObject, использует его.
-        /// Если null, создает новый object.
-        /// </summary>
-        // Режим конкурентности (ТЗ 4.1.1): фиксируется при конструировании.
         private readonly ConcurrencyMode _mode;
         public ConcurrencyMode Mode { get { return _mode; } }
 
-        /// <summary>Переходный конструктор: режим из KernelRuntime.DefaultMode в момент создания.</summary>
+        /// <summary>Uses the concurrency mode currently configured on KernelRuntime.DefaultMode.
+        /// Uses <paramref name="existingLockObject"/> if provided, otherwise creates a new object.</summary>
         public SharedLock(object existingLockObject = null)
             : this(KernelRuntime.DefaultMode, existingLockObject)
         {
@@ -98,7 +88,7 @@ namespace AECC.Extensions.ThreadingSync
         }
 
         /// <summary>
-        /// Захватывает блокировку и возвращает Disposable токен.
+        /// Acquires the lock and returns a disposable token.
         /// </summary>
         public LockToken Lock()
         {
@@ -106,9 +96,10 @@ namespace AECC.Extensions.ThreadingSync
         }
 
         /// <summary>
-        /// Zero-alloc вход в блокировку: readonly struct, потребляется ТОЛЬКО через using
-        /// по месту (без боксинга в IDisposable, без хранения в поле, без возврата наружу).
-        /// В OneThreadMode реального захвата нет. Monitor реентрантен — вложенные Lock корректны.
+        /// Zero-alloc lock entry: a readonly struct meant to be consumed ONLY via a local `using`
+        /// (no boxing to IDisposable, not stored in a field, not returned to a caller).
+        /// In SingleThread mode no real lock is taken. Monitor is reentrant, so nested Lock calls
+        /// on the same thread are safe.
         /// </summary>
         public Scope LockScoped() => new Scope(LockObject, _mode);
 
@@ -116,8 +107,7 @@ namespace AECC.Extensions.ThreadingSync
         {
             private readonly object _gate;
             private readonly bool _taken;
-            /// <summary>Переходный конструктор: режим читается из KernelRuntime.DefaultMode
-            /// в момент входа (дословная замена прежнего чтения глобального флага по месту).</summary>
+            /// <summary>Uses the concurrency mode currently configured on KernelRuntime.DefaultMode.</summary>
             public Scope(object gate)
                 : this(gate, KernelRuntime.DefaultMode)
             {
@@ -135,7 +125,7 @@ namespace AECC.Extensions.ThreadingSync
         }
 
         /// <summary>
-        /// Выполняет действие внутри блокировки (синтаксический сахар).
+        /// Runs the action while holding the lock (syntactic sugar).
         /// </summary>
         public void ExecuteLocked(Action action)
         {

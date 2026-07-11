@@ -21,19 +21,18 @@ namespace AECC.Core
     [System.Serializable]
     public partial class EntityComponentStorage : IComponentStoreListener
     {
-        // internal: extension-пайплайн сериализации (уезжает в AECC.Serialization; IVT).
+        // internal: extension-пайплайн сериализации (IVT в AECC.Serialization).
         internal ECSEntity entity;
         public int ChangedComponent => changedComponents.Count;
-        public bool isAsync => false; // PHASE 3a: async component storage retired (was allocating componentsAsync per entity)
+        public bool isAsync => false;
 
-        // ФАЗА 3, шаг 2 (ТЗ 4.5.1): словарь инкапсулирован в ComponentStore — «только
-        // хранение + транзакционная матрица + absence-holds»; ключ — стабильный type-uid
-        // (long, == component.GetId() == type.TypeId()), HoldKeys ВКЛЮЧЁН. Side-effects
-        // (зеркала сериализации, fastEntityComponentsId, manager-нотификации) исполняет
-        // слушатель IComponentStoreListener — переходно этот же класс (оркестратор зеркал
-        // до фазы 4; целевой слушатель — мир). Public API по-прежнему принимает Type;
-        // Kid() маппит Type->id на границе — обратных int->Type лукапов не появляется.
-        // Ленивость сохранена: момент фиксации ConcurrencyMode — первый доступ, как раньше.
+        // Словарь компонентов инкапсулирован в ComponentStore — только хранение +
+        // транзакционная матрица + absence-holds; ключ — стабильный type-uid (long,
+        // == component.GetId() == type.TypeId()). Side-effects (зеркала сериализации,
+        // fastEntityComponentsId, manager-нотификации) исполняет слушатель
+        // IComponentStoreListener — этот же класс. Public API принимает Type;
+        // Kid() маппит Type->id на границе, обратных int->Type лукапов нет.
+        // ConcurrencyMode фиксируется лениво, на момент первого обращения к Store.
         private ComponentStore storeValue;
         internal ComponentStore Store
         {
@@ -51,10 +50,10 @@ namespace AECC.Core
         // (cached reflection), so it does NOT depend on the serializer's TypeStorage being populated.
         internal static long Kid(Type t) { return t.TypeId(); }
 
-        // ФАЗА 4, шаг 1 (ТЗ 4.7): dirty-set / зеркало / removed / bin / empty переехали во
-        // владение Serialization (EntitySerializationState в opaque-слоте сущности).
-        // Горячий путь (dirty-запись на каждый change) — через эту кэш-ссылку: по стоимости
-        // прежнее чтение поля. Пересадка на новую сущность — в RestoreComponentsAfterSerialization.
+        // dirty-set / зеркало / removed / bin / empty принадлежат Serialization
+        // (EntitySerializationState в opaque-слоте сущности). Горячий путь (dirty-запись
+        // на каждый change) идёт через эту кэш-ссылку. Пересадка на новую сущность — в
+        // RestoreComponentsAfterSerialization.
         [System.NonSerialized]
         private AECC.Core.Serialization.EntitySerializationState _serState;
         private AECC.Core.Serialization.EntitySerializationState SerState
@@ -69,12 +68,10 @@ namespace AECC.Core
 
         internal IDictionary<Type, int> changedComponents { get { return SerState.ChangedComponents; } }
 
-        // ОПТИМИЗАЦИЯ ПАМЯТИ (санкционированный breaking): пер-сущностный
-        // SerializationContainer УДАЛЁН ПОЛНОСТЬЮ. Живое зеркало дублировало Store
-        // (полносрезная сериализация читает Store напрямую — StorageSerializationPipeline),
-        // а транзитный буфер десериализации стал локальным словарём
-        // (DeserializeStorage возвращает его, RestoreComponentsAfterSerialization /
-        // UpdateDeserialize принимают параметром).
+        // Полносрезная сериализация читает Store напрямую (StorageSerializationPipeline);
+        // отдельного живого зеркала нет. Транзитный буфер десериализации — локальный
+        // словарь, передаваемый параметром (см. DeserializeStorage /
+        // RestoreComponentsAfterSerialization / UpdateDeserialize).
 
         [IgnoreDataMember]
         public List<long> RemovedComponents
@@ -86,12 +83,11 @@ namespace AECC.Core
         private RWLock stabilizationGateValue;
 
         /// <summary>
-        /// Entity-wide СТАБИЛИЗАЦИОННЫЙ ГЕЙТ (переименован из StabilizationLocker, ТЗ 4.5.1):
-        /// RW-барьер уровня сущности, под write-стороной которого выполняются мутации
-        /// DB-агрегатора, а под read-стороной — сериализация среза сущности. Настоящие
-        /// потребители — ровно два: сериализация (EntityNetSerializer) и DBComponent
-        /// (единый авторитет синхронизации DB, идея 1.12). Это НЕ лок словаря компонентов —
-        /// у слотов свои инлайновые ячейки.
+        /// Entity-wide стабилизационный гейт: RW-барьер уровня сущности, под write-стороной
+        /// которого выполняются мутации DB-агрегатора, а под read-стороной — сериализация
+        /// среза сущности. Потребители — сериализация (EntityNetSerializer) и DBComponent
+        /// (единый авторитет синхронизации DB). Это НЕ лок словаря компонентов — у слотов
+        /// свои инлайновые ячейки.
         /// </summary>
         [IgnoreDataMember]
         public RWLock StabilizationGate
@@ -110,7 +106,7 @@ namespace AECC.Core
             }
         }
 
-        [Obsolete("Фаза 3 (ТЗ 4.5.1): переименовано в StabilizationGate — entity-wide стабилизационный гейт")]
+        [Obsolete("Переименовано в StabilizationGate — entity-wide стабилизационный гейт")]
         [IgnoreDataMember]
         public RWLock StabilizationLocker
         {
@@ -125,18 +121,15 @@ namespace AECC.Core
 
         #region serialization
 
-        // ФАЗА 4, вынос сборок (ТЗ 4.7, breaking): SlicedSerializeStorage / SerializeStorage /
-        // DeserializeStorage — «внутренние методы Serialization» — извлечены ДОСЛОВНО в
-        // extension-класс EntityComponentStorageSerialization (файл уезжает в сборку
-        // AECC.Serialization; вызовы сохраняют синтаксис через using). Здесь остались только
-        // адаптер-независимые части пайплайна: RestoreComponentsAfterSerialization и
-        // FilterRemovedComponents (компайл-чисты; владение модулем мигрирует позже).
+        // SlicedSerializeStorage / SerializeStorage / DeserializeStorage живут в
+        // extension-классе EntityComponentStorageSerialization (сборка AECC.Serialization;
+        // вызовы сохраняют синтаксис через using). Здесь — адаптер-независимые части
+        // пайплайна: RestoreComponentsAfterSerialization и FilterRemovedComponents.
 
         /// <summary>
         /// Перенос распакованных компонентов (результат DeserializeStorage) в живой Store
-        /// пустой сущности + пересадка сериализационного состояния носителя. ОПТИМИЗАЦИЯ
-        /// ПАМЯТИ (санкционированный breaking сигнатуры): буфер приходит ПАРАМЕТРОМ —
-        /// пер-сущностный SerializationContainer упразднён полностью.
+        /// пустой сущности + пересадка сериализационного состояния носителя. Буфер приходит
+        /// параметром — отдельного пер-сущностного контейнера для него нет.
         /// </summary>
         public void RestoreComponentsAfterSerialization(ECSEntity entity, Dictionary<long, ECSComponent> deserializedComponents)
         {
@@ -144,8 +137,7 @@ namespace AECC.Core
             // (данные принадлежат сущности; десериализованный носитель отдаёт их ей).
             // ВАЖЕН ПОРЯДОК: state резолвится ДО переключения this.entity — иначе ленивый
             // SerState-геттер (при холодном кэше) создал бы СВЕЖИЙ state уже на целевой
-            // сущности, молча теряя dirty/removed носителя. Дефект шага 1, пойман
-            // первым реальным прогоном сетки (тест «пересадка state» ранее не запускался).
+            // сущности, молча теряя dirty/removed носителя.
             var st = SerState;   // state носителя (this.entity ещё старый)
             this.entity = entity;
             entity.serializationState = st;
@@ -167,9 +159,8 @@ namespace AECC.Core
                 }
                 afterDeser.ForEach(typedComponent =>
                 {
-                    // Фаза 4, шаг 2 (ТЗ 4.7): AfterRestore участника; clientRetry — из профиля
-                    // (событийный ретрай клиентской ветки, идея 1.8). Семантика дословно прежняя:
-                    // UnserializeDB(retryNullEntityOwner = ClientRetryOnMissingRefs).
+                    // AfterRestore участника; clientRetry берётся из профиля мира
+                    // (событийный ретрай на клиентской ветке).
                     var participant = typedComponent as AECC.Abstractions.ISerializationParticipant;
                     if (participant != null)
                     {
@@ -199,7 +190,7 @@ namespace AECC.Core
             bool added;
             bool changedBranch;
             Store.AddOrChange(Kid(comType), component, restoringMode, silent, restoringMode ? this.entity : null, out added, out changedBranch);
-            // исход dirty прежний: change-ветка помечает только при !silent (см. ComponentChanged)
+            // change-ветка помечает dirty только при !silent (см. ComponentChanged)
             bool changed = changedBranch && !silent;
             if (added)
             {
@@ -215,9 +206,7 @@ namespace AECC.Core
                     });
                 }
             }
-            // else
-            //     NLogger.Error("try add presented component");
-            
+
             if (!silent && changed)
             {
                 component.ChangeReaction(this.entity);
@@ -248,15 +237,14 @@ namespace AECC.Core
             return added;
         }
 
-        /// <summary>IComponentStoreListener: под write-локом ячейки, после мутации словаря
-        /// (бывш. AddComponentProcess, тело дословное).</summary>
+        /// <summary>IComponentStoreListener: вызывается под write-локом ячейки, после мутации словаря.</summary>
         public void ComponentAdded(long typeUid, ECSComponent component, bool restoringMode)
         {
             component.ownerEntity = this.entity;
             component.ECSWorldOwner = this.entity?.ECSWorldOwner;
             if (this.entity != null)
             {
-                if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+                if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner))
                 {
                     this.entity.fastEntityComponentsId.AddI(component.instanceId, 0, this.entity.SerialLocker);
                 }
@@ -266,10 +254,9 @@ namespace AECC.Core
                 NLogger.LogError("null owner entity");
             }
 
-            // ОПТИМИЗАЦИЯ ПАМЯТИ: ведение живого зеркала SerializationContainer упразднено —
-            // компонент уже лежит в живом Store под тем же ключом typeUid, полносрезная
-            // сериализация читает Store напрямую. (Посадочный буфер десериализации
-            // наполняет только DeserializeStorage.)
+            // Компонент уже лежит в живом Store под тем же ключом typeUid; полносрезная
+            // сериализация читает Store напрямую (только DeserializeStorage наполняет
+            // отдельный посадочный буфер десериализации).
             component.ECSWorldOwner?.entityManager.OnAddComponent(this.entity, component);
         }
 
@@ -283,15 +270,13 @@ namespace AECC.Core
             return changed;
         }
 
-        /// <summary>IComponentStoreListener: под write-локом ячейки (бывш. ChangeComponentProcess,
-        /// тело дословное + сохранённая restoring-DB-ветка из бывшего AddOrChange-транзакта).</summary>
+        /// <summary>IComponentStoreListener: вызывается под write-локом ячейки.</summary>
         public void ComponentChanged(long typeUid, ECSComponent component, ECSComponent oldcomponent, bool silent, ECSEntity restoringOwner, bool restoringMode)
         {
             if (restoringOwner != null)
                 component.ownerEntity = restoringOwner;
             if(component.ECSWorldOwner != null)
                 component.Unregistered = false;
-            //component.StateReactionQueue = oldcomponent.StateReactionQueue;
             if (!silent)
             {
                 Type componentClass = component.GetTypeFast();
@@ -299,18 +284,17 @@ namespace AECC.Core
             }
             if (restoringMode)
             {
-                // Дословно прежняя ветка restoring-режима AddOrChange: DB-агрегатор при
-                // восстановлении сохраняет старый инстанс, перенимая только serializedDB.
+                // В restoring-режиме DB-агрегатор сохраняет старый инстанс, перенимая
+                // только serializedDB.
                 if (component is DBComponent dBComponent)
                 {
-                    Store.UnsafeChange(typeUid, oldcomponent); // под удержанным ячеечным локом, как раньше
+                    Store.UnsafeChange(typeUid, oldcomponent); // под удержанным ячеечным локом
                     (oldcomponent as DBComponent).serializedDB = (component as DBComponent).serializedDB;
                 }
             }
         }
 
-        /// <summary>IComponentStoreListener: пометка без замены значения (бывш. тело
-        /// MarkComponentChanged-транзакта). Сольётся с ComponentChanged в фазе 4.</summary>
+        /// <summary>IComponentStoreListener: пометка изменённым без замены значения.</summary>
         public void ComponentMarkedChanged(long typeUid, ECSComponent component, bool serializationSilent)
         {
             Type componentClass = component.GetTypeFast();
@@ -370,7 +354,7 @@ namespace AECC.Core
             ECSComponent component = null;
             try
             {
-                // typeId IS the dictionary key now (== component.GetId()); no registry reverse needed.
+                // typeId is the dictionary key (== component.GetId()); no registry reverse lookup needed.
                 component = this.Store.GetOrThrow(componentTypeId);
             }
             catch (Exception ex)
@@ -408,8 +392,8 @@ namespace AECC.Core
             return component2;
         }
 
-        // Id-based removal: typeId IS the slot key; the Type for RemoveComponentProcess is taken
-        // from the live component instance (registry-independent reverse).
+        // Id-based removal: typeId is the slot key; the Type is taken from the live
+        // component instance (no registry reverse-lookup needed).
         private ECSComponent RemoveComponentByIdImmediately(long typeId)
         {
             ECSComponent component2 = null;
@@ -426,15 +410,13 @@ namespace AECC.Core
             return component2;
         }
 
-        /// <summary>IComponentStoreListener: под write-локом ячейки, после изъятия из словаря
-        /// (бывш. RemoveComponentProcess, тело дословное).</summary>
+        /// <summary>IComponentStoreListener: вызывается под write-локом ячейки, после изъятия из словаря.</summary>
         public void ComponentRemoved(long typeUid, ECSComponent component)
         {
             Type componentClass = component.GetTypeFast();
             this.changedComponents.Remove(componentClass, out _);
-            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner))
             {
-                // ОПТИМИЗАЦИЯ ПАМЯТИ: изъятие из живого зеркала упразднено вместе с зеркалом.
                 this.entity.fastEntityComponentsId.RemoveI(component.instanceId, this.entity.SerialLocker);
                 if (Defines.TrackRemovedComponents)
                     this.RemovedComponents.Add(component.GetId());
@@ -488,9 +470,8 @@ namespace AECC.Core
                         {
                             this.changedComponents.Remove(removedComponent.GetTypeFast(), out _);
                             this.Store.RemoveRaw(removedComponent.GetId());
-                            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+                            if(WorldProfile.SerializationCollections(this.entity.ECSWorldOwner))
                             {
-                                // ОПТИМИЗАЦИЯ ПАМЯТИ: изъятие из живого зеркала упразднено вместе с зеркалом.
                                 this.entity.fastEntityComponentsId.RemoveI(removedComponent.instanceId, this.entity.SerialLocker);
                                 if (Defines.TrackRemovedComponents)
                                     this.RemovedComponents.Add(removedComponent.GetId());
@@ -614,7 +595,7 @@ namespace AECC.Core
         public ECSComponent GetComponentUnsafe(long componentTypeId)
         {
             ECSComponent component;
-            // typeId IS the slot key (== component.GetId()); same in both modes.
+            // typeId is the slot key (== component.GetId()).
             return !this.Store.TryGetValue(componentTypeId, out component) ? null : component;
         }
         #endregion
@@ -741,9 +722,8 @@ namespace AECC.Core
             // Дочищаем технологические словари. К этому моменту RemoveComponentProcess
             // уже должен был вынести из них почти всё — это страховка от рассинхрона
             // и от компонентов, которых не оказалось в основном словаре.
-            if (WorldProfile.SerializationCollections(this.entity.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+            if (WorldProfile.SerializationCollections(this.entity.ECSWorldOwner))
             {
-                // SerializationContainer удалён полностью — чистить больше нечего.
                 this.RemovedComponents.Clear();
             }
 

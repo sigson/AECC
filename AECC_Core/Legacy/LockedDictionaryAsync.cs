@@ -23,8 +23,7 @@ namespace AECC.Collections
         }
 
         private LockedDictionaryAsync<TKey, bool> KeysHoldingStorage = null;
-        //private ConcurrentDictionary<TKey, bool> KeysHoldingLockdownCache = new ConcurrentDictionary<TKey, bool>();
-        
+
         public bool HoldKeys = false;
         public bool HoldKeyStorage = false;
         public bool LockValue = false;
@@ -584,8 +583,8 @@ namespace AECC.Collections
             using (await GlobalLocker.WriteLockAsync())
             {
                 result = dictionary.ToDictionary(x => x.Key, x => x.Value.Value);
-                
-                // Сохранение старой логики взятия токенов. Для избежания дедлоков берём их последовательно.
+
+                // Токены берутся последовательно (не параллельно), чтобы избежать дедлоков.
                 var tokens = new List<IDisposable>();
                 foreach (var kvp in dictionary)
                 {

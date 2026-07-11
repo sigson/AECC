@@ -32,15 +32,15 @@ namespace AECC.Core
         public string Name;
         [System.NonSerialized]
         public string serializedEntity;
-        /// <summary>Opaque-слот сериализационного состояния (фаза 4, ТЗ 4.7): модель ХРАНИТ,
-        /// не интерпретирует — внутри живёт AECC.Core.Serialization.EntitySerializationState
+        /// <summary>Opaque-слот сериализационного состояния: модель ХРАНИТ, не интерпретирует —
+        /// внутри живёт AECC.Core.Serialization.EntitySerializationState
         /// (dirty-set, зеркало, removed, bin/empty). Слот вместо внешней таблицы: без лукапа
         /// и контенции на каждом чейндже.</summary>
         [System.NonSerialized]
         [IgnoreDataMember]
         public object serializationState;
 
-        // Бывшие поля — форвардинг в состояние (владение у Serialization; внешние касания,
+        // Форвардинг в serializationState (владение у Serialization; внешние касания,
         // включая GDAP-фильтр и сетку, работают без изменений).
         [IgnoreDataMember]
         public byte[] binSerializedEntity
@@ -61,7 +61,7 @@ namespace AECC.Core
         public ECSEntity()
         {
             entityComponents = new EntityComponentStorage(this);
-            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner))
             {
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
@@ -71,7 +71,7 @@ namespace AECC.Core
         public ECSEntity(long instanceid)
         {
             entityComponents = new EntityComponentStorage(this);
-            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner))
             {
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
@@ -83,12 +83,12 @@ namespace AECC.Core
         {
             this.ECSWorldOwner = world;
             entityComponents = new EntityComponentStorage(this);
-            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner))
             {
                 fastEntityComponentsId = new Dictionary<long, int>();
                 dataAccessPolicies = new SynchronizedList<GroupDataAccessPolicy>();
             }
-            // PHASE 3b: async add path removed; asyncMode is retained only for signature stability.
+            // asyncMode is retained only for signature stability; entities are always added synchronously.
             foreach (var component in eCSComponents)
             {
                 this.AddComponentSilent(component);
@@ -500,7 +500,6 @@ namespace AECC.Core
             {
                 this.AddComponentImpl(component, false);
             }
-            //entityComponents.RegisterAllComponents(false);
         }
 
         public void AddComponentsSilent(IEnumerable<ECSComponent> components)
@@ -636,7 +635,7 @@ namespace AECC.Core
         {
             this.Alive = false;
             this.entityComponents.OnEntityDelete();
-            if(WorldProfile.SerializationCollections(this.ECSWorldOwner)) // вырожденное тройное условие -> один bool (ТЗ 4.5.6)
+            if(WorldProfile.SerializationCollections(this.ECSWorldOwner))
             {
                 this.dataAccessPolicies.Clear();
                 this.fastEntityComponentsId.ClearI(this.SerialLocker);

@@ -10,7 +10,7 @@ using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
 
-using AECC.Core; // видимость Core больше не наследуется от родительского неймспейса
+using AECC.Core;
 
 namespace AECC.Serialization
 {
@@ -21,15 +21,14 @@ namespace AECC.Serialization
     public abstract class EntitySerializer
     {
         #region setupData
-        // Фаза 2 (ТЗ 4.3): карты Type<->id переехали во владение TypeRegistry.Global.
-        // Статики оставлены [Obsolete]-фасадами НА ТЕ ЖЕ инстансы DictionaryWrapper —
-        // внешний код со старыми обращениями (индексатор, TryGetValue, ForEach) работает
-        // без изменений; ядро переведено на ITypeRegistry.
-        [Obsolete("Фаза 2: используйте ITypeRegistry (AECC.Core.TypeRegistry.Global)")]
+        // These static Type<->id maps are [Obsolete] facades over the same DictionaryWrapper
+        // instances owned by TypeRegistry.Global, kept for external code that still indexes
+        // them directly; internal code should use ITypeRegistry.
+        [Obsolete("Используйте ITypeRegistry (AECC.Core.TypeRegistry.Global)")]
         public static DictionaryWrapper<long, Type> TypeStorage { get { return TypeRegistry.Global.ById; } }
-        [Obsolete("Фаза 2: используйте ITypeRegistry (AECC.Core.TypeRegistry.Global)")]
+        [Obsolete("Используйте ITypeRegistry (AECC.Core.TypeRegistry.Global)")]
         public static DictionaryWrapper<string, Type> TypeStringStorage { get { return TypeRegistry.Global.ByName; } }
-        [Obsolete("Фаза 2: используйте ITypeRegistry (AECC.Core.TypeRegistry.Global)")]
+        [Obsolete("Используйте ITypeRegistry (AECC.Core.TypeRegistry.Global)")]
         public static DictionaryWrapper<Type, long> TypeIdStorage { get { return TypeRegistry.Global.RegisteredIds; } }
 
         public static HashSet<Type> SerializationCache = new HashSet<Type>();
@@ -39,17 +38,16 @@ namespace AECC.Serialization
         public ISerializationAdapter serializationAdapter;
         public ECSWorld worldOwner;
 
-        // Оставили реализацию в базовом классе, так как она работает со статическим кешем
+        // Implementation lives in the base class because it operates on the static cache.
         public void InitSerialize(ECSWorld world, ISerializationAdapter adapter)
         {
             if (SerializationCache.Count == 0)
             {
                 var nonSerializedSet = new HashSet<Type>() { };
 
-                var ecsObjects = new HashSet<Type>(ECSAssemblyExtensions.GetAllSubclassOf(typeof(IDObject)).Where(x => !x.IsAbstract).Where(x => !nonSerializedSet.Contains(x))); // ToHashSet есть в net472, но не в netstandard2.0
+                var ecsObjects = new HashSet<Type>(ECSAssemblyExtensions.GetAllSubclassOf(typeof(IDObject)).Where(x => !x.IsAbstract).Where(x => !nonSerializedSet.Contains(x)));
                 ecsObjects.Select(x => Activator.CreateInstance(x)).Cast<IDObject>().ForEach(x =>
                 {
-                    // Фаза 2: регистрация в реестре (проверка коллизии id и её сообщение — внутри, дословно).
                     TypeRegistry.Global.Register(x.GetId(), x.GetType());
 
                     try
@@ -82,9 +80,6 @@ namespace AECC.Serialization
             public byte[] Entity;
             [System.NonSerialized]
             public ECSEntity desEntity = null;
-            // ОПТИМИЗАЦИЯ ПАМЯТИ: [NonSerialized]-поле SerializationContainer и его
-            // единственный писатель DeserializeComponents() удалены — метод никем не
-            // вызывался, а DictionaryWrapper жадно аллоцировался на КАЖДЫЙ входящий пакет.
             public Dictionary<long, byte[]> Components = new Dictionary<long, byte[]>();
 
             public ISerializationAdapter adapter;
@@ -103,7 +98,6 @@ namespace AECC.Serialization
         }
         #endregion
 
-        // Абстрактные объявления (приватные методы изменены на protected для возможности override)
         protected abstract byte[] FullSerialize(ECSEntity entity, bool serializeOnlyChanged = false);
         protected abstract Dictionary<long, byte[]> SlicedSerialize(ECSEntity entity, bool serializeOnlyChanged = false, bool clearChanged = false);
         public abstract void SerializeEntity(ECSEntity entity, bool serializeOnlyChanged = false);

@@ -1,23 +1,18 @@
 namespace AECC.Abstractions
 {
     /// <summary>
-    /// Участник сериализации (фаза 4, шаг 2; ТЗ 4.7): сериализатор и хранилище больше НЕ
-    /// знают конкретный DBComponent — компонент, которому нужны хуки вокруг снапшота и
-    /// после восстановления, реализует этот интерфейс. Семантика вызовов дословно прежняя:
+    /// Implemented by components that need hooks around snapshotting and restore. The
+    /// serializer and storage interact only through this interface, not any concrete
+    /// component type:
     ///
-    ///   BeforeSnapshot — точка бывшего SerializeDB(serializeOnlyChanged, clearChanged):
-    ///                    под SerialLocker компонента, ДО adapter.SerializeECSComponent;
-    ///   AfterSnapshot  — точка бывшего AfterSerializationDB(clearChanged): сразу ПОСЛЕ
-    ///                    adapter.SerializeECSComponent, под тем же локом;
-    ///   AfterRestore   — точка бывшего UnserializeDB()/UnserializeDB(true) при
-    ///                    восстановлении: clientRetry == Profile.ClientRetryOnMissingRefs
-    ///                    (событийный ретрай клиентской ветки, идея 1.8). Вызывается на
-    ///                    ЖИВОМ инстансе из хранилища (restoring-режим сохраняет старый
-    ///                    инстанс DB-агрегатора, перенимая serializedDB).
-    ///
-    /// Restoring-перенос payload (`serializedDB` в ComponentChanged хранилища) — отдельная
-    /// механика восстановления, НЕ снапшот-хук; уезжает вместе с пайплайном при выносе
-    /// сборки Serialization.
+    ///   BeforeSnapshot — called under the component's SerialLocker, before
+    ///                    adapter.SerializeECSComponent;
+    ///   AfterSnapshot  — called immediately after adapter.SerializeECSComponent, under the
+    ///                    same lock;
+    ///   AfterRestore   — called on restore, with clientRetry == Profile.ClientRetryOnMissingRefs
+    ///                    (client-side retry on missing references). Called on the live
+    ///                    instance from storage: restoring mode keeps the old aggregator
+    ///                    instance and has it take over the incoming payload.
     /// </summary>
     public interface ISerializationParticipant
     {

@@ -1,13 +1,9 @@
 namespace AECC.Locking
 {
     /// <summary>
-    /// Режим конкурентности лок-примитивов (ТЗ 4.1.1). Заменяет чтение глобального
-    /// <c>Defines.OneThreadMode</c> из тел методов лок-ядра. Мир фиксирует режим при
-    /// создании и раздаёт его своим хранилищам через параметр конструктора.
-    ///
-    /// BREAKING CHANGE (санкционирован ТЗ 4.1.1): переключение флага "на лету" перестаёт
-    /// влиять на уже созданные структуры — режим фиксируется в момент конструирования
-    /// (раньше это и так было небезопасно).
+    /// Concurrency mode for the lock primitives. Each container fixes its mode at construction
+    /// time and passes it to its own storages via the constructor parameter; switching the mode
+    /// afterward does not affect already-constructed structures.
     /// </summary>
     public enum ConcurrencyMode : byte
     {
@@ -16,23 +12,17 @@ namespace AECC.Locking
     }
 
     /// <summary>
-    /// ПЕРЕХОДНЫЙ (фазы 1-2) процессный дефолт для конструкторов, не получивших режим явно,
-    /// и для legacy-мест "чтения флага в момент использования" (DictionaryWrapper, DualGate).
+    /// Process-wide default used by constructors that are not given a mode explicitly.
     ///
-    /// Kernel не знает про Defines (0 зависимостей); приложение синхронизирует значение:
-    /// свойство <c>Defines.OneThreadMode</c> в AECC.Core теперь форвардит сюда, поэтому
-    /// семантика "старый код читает Defines в момент использования" сохранена дословно.
-    ///
-    /// Начиная с фазы 3 мир передаёт <see cref="ConcurrencyMode"/> своим хранилищам явно
-    /// (через WorldProfile), и этот дефолт остаётся только за legacy-фасадами.
-    /// Дефолты повторяют исходные значения Defines: OneThreadMode = true, ThreadsMode = true.
+    /// The kernel has no dependency on the application's configuration layer; the application is
+    /// responsible for keeping these values in sync with its own settings.
     /// </summary>
     public static class KernelRuntime
     {
-        /// <summary>Процессный дефолт режима конкурентности. Синхронизируется с Defines.OneThreadMode.</summary>
+        /// <summary>Process-wide default concurrency mode.</summary>
         public static volatile ConcurrencyMode DefaultMode = ConcurrencyMode.SingleThread;
 
-        /// <summary>Синхронизируется с Defines.ThreadsMode (выбор реализации IReaderWriterLockSlim в RWLock).</summary>
+        /// <summary>Selects which IReaderWriterLockSlim implementation RWLock uses.</summary>
         public static volatile bool ThreadsMode = true;
     }
 }

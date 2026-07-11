@@ -9,16 +9,11 @@ using System.Threading;
 namespace AECC.Locking
 {
     /// <summary>
-    /// Drop-in replacement for the old <c>LockedDictionary&lt;TKey,TValue&gt;</c> with IDENTICAL
-    /// transactional semantics (lockdown, HoldKey, ExecuteOn*Locked, Unsafe*), but the per-cell
-    /// heavyweight <c>RWLock</c> object (a ReaderWriterLockSlim with recursion, ~115 B + kernel
-    /// handle + recursion registry) is replaced by a single inline <c>long</c> driven by
-    /// <see cref="RWCell"/>. The control flow is kept line-for-line with the original so behaviour
-    /// is preserved; only the lock primitive and the cell type changed.
-    ///
-    /// Memory per cell: was ~140 B (LockedValue + RWLock + RWLS), now ~32 B (Cell node only,
-    /// 8 of which are the lock). The ConcurrentDictionary keeps node identity stable across resize,
-    /// so <c>ref cell.Lock</c> remains valid while a lock is held.
+    /// Thread-safe dictionary with transactional semantics (lockdown, HoldKey, ExecuteOn*Locked,
+    /// Unsafe*). Each cell's read/write state is a single inline <c>long</c> driven by
+    /// <see cref="RWCell"/>, avoiding a heavyweight per-cell lock object. The ConcurrentDictionary
+    /// keeps node identity stable across resize, so <c>ref cell.Lock</c> remains valid while a lock
+    /// is held.
     ///
     /// This is the recommended vehicle for the WORLD-LEVEL dictionaries (EntityStorage,
     /// childECSObjects, PreinitializedEntities). For the hottest
@@ -29,7 +24,7 @@ namespace AECC.Locking
         private sealed class Cell
         {
             public TValue Value;
-            public long Lock; // inline RW state (RWCell), replaces the old `RWLock lockValue`
+            public long Lock; // inline RW state (RWCell)
         }
 
         // ───────── debug / consistency-verification mode (off by default, zero cost when off) ─────────
@@ -72,14 +67,12 @@ namespace AECC.Locking
         public bool LockValue { get; set; }
         public bool IsLockdown { get { return _lockdown; } }
 
-        // Режим конкурентности (ТЗ 4.1.1): фиксируется при конструировании, заменяет чтения
-        // глобального флага однопоточности из тел методов. Мир раздаёт режим своим хранилищам.
+        // Concurrency mode is fixed at construction time.
         private readonly ConcurrencyMode _mode;
         private bool SingleThread { get { return _mode == ConcurrencyMode.SingleThread; } }
         public ConcurrencyMode Mode { get { return _mode; } }
 
-        /// <summary>Переходный конструктор: режим берётся из KernelRuntime.DefaultMode
-        /// (синхронизирован приложением) В МОМЕНТ СОЗДАНИЯ. С фазы 3 мир передаёт режим явно.</summary>
+        /// <summary>Uses the concurrency mode currently configured on KernelRuntime.DefaultMode.</summary>
         public LockedDictionarySlim(bool preserveLockingKeys = false)
             : this(KernelRuntime.DefaultMode, preserveLockingKeys)
         {
@@ -211,9 +204,8 @@ namespace AECC.Locking
         /// Explicit outcome of a structural add/change. This is the SOLE source of truth for
         /// "what happened", decoupled from whether a REAL <see cref="RWToken"/> was produced.
         /// In OneThreadMode every cell acquire yields a dummy (non-real) token, so the outcome
-        /// MUST NOT be inferred from <see cref="RWToken.IsReal"/> — doing so silently dropped the
-        /// executors' callbacks in single-thread mode. <see cref="RWToken.IsReal"/> is now purely
-        /// a disposal predicate ("is there anything to release"), never a control-flow signal.
+        /// MUST NOT be inferred from <see cref="RWToken.IsReal"/>. <see cref="RWToken.IsReal"/> is
+        /// purely a disposal predicate ("is there anything to release"), never a control-flow signal.
         /// </summary>
         private enum AddOutcome : byte
         {
@@ -230,7 +222,7 @@ namespace AECC.Locking
         /// modes. When <paramref name="lockedMode"/> is set, <paramref name="lockToken"/> carries the
         /// cell's write lock on Added/Changed (real in multi-thread, dummy in OneThreadMode) — the
         /// caller runs its callback under that lock and disposes it afterwards. On Refused the token
-        /// is <c>default</c>. MT-core control flow (freeze barrier, CellLock, retry loop) is unchanged.
+        /// is <c>default</c>.
         /// </summary>
         private AddOutcome TryAddOrChangeCore(TKey key, TValue value, out TValue oldValue, out RWToken lockToken,
             bool lockedMode = false, bool? overrideLockingMode = false, bool addOnly = false)
@@ -245,9 +237,8 @@ namespace AECC.Locking
                 if (_lockdown) return AddOutcome.Refused;
 
                 // Cell lock mode for add/change. For a REAL value store, adding or replacing the
-                // value is an exclusive mutation -> WRITE lock (this is the fix for the validator's
-                // "READ saw active writer": previously the mode came from overrideLockingMode, which
-                // defaulted to read, so callbacks ran under a shared read lock). The nested
+                // value is an exclusive mutation -> WRITE lock (callbacks must run under a write
+                // lock, never a shared read lock). The nested
                 // KeysHoldingStorage is a hold proxy whose bool value is never meaningfully mutated;
                 // there the lock mode IS the semantic (read = shared hold, write = exclusive/add-block),
                 // so it follows overrideLockingMode.
@@ -286,10 +277,8 @@ namespace AECC.Locking
                     }
 
                     // (2) change the existing cell
-                    // ФИКС ДЕФЕКТА №15 (пойман матрицей 9а): add-only операции (TryAdd,
-                    // ExecuteOnAddLocked) на существующем ключе раньше проваливались в
-                    // change-ветку — ПЕРЕЗАПИСЫВАЛИ значение и возвращали false/без коллбэка.
-                    // Матрица: «повторный add отклонён» = отказ БЕЗ мутации и без захвата ячейки.
+                    // add-only operations (TryAdd, ExecuteOnAddLocked) on an existing key must be
+                    // refused WITHOUT mutating the value and without acquiring the cell lock.
                     if (addOnly) return AddOutcome.Refused;
                     Cell dvalue;
                     if (!_dict.TryGetValue(key, out dvalue)) continue; // vanished -> retry add
@@ -311,11 +300,11 @@ namespace AECC.Locking
         }
 
         /// <summary>
-        /// Thin bool projection of <see cref="TryAddOrChangeCore"/> preserving the historical
-        /// contract used by the plain-dictionary surface (<c>TryAdd</c>, indexer, <c>Add</c>,
-        /// <c>TryAddChangeLockedElement</c>): <c>true</c> == a new key was added, <c>false</c> ==
-        /// changed or refused. Callers that must distinguish Changed from Refused (the transactional
-        /// executors) call <see cref="TryAddOrChangeCore"/> directly instead of this wrapper.
+        /// Thin bool projection of <see cref="TryAddOrChangeCore"/> used by the plain-dictionary
+        /// surface (<c>TryAdd</c>, indexer, <c>Add</c>, <c>TryAddChangeLockedElement</c>):
+        /// <c>true</c> == a new key was added, <c>false</c> == changed or refused. Callers that must
+        /// distinguish Changed from Refused (the transactional executors) call
+        /// <see cref="TryAddOrChangeCore"/> directly instead of this wrapper.
         /// </summary>
         private bool TryAddOrChange(TKey key, TValue value, out TValue oldValue, out RWToken lockToken,
             bool lockedMode = false, bool? overrideLockingMode = false)
@@ -412,10 +401,9 @@ namespace AECC.Locking
                 RWToken rd;
                 // exclusive ? write-lock the holding cell : read-lock it (shared among holders)
                 _keysHolding.TryAddChangeLockedElement(key, false, true, out rd, exclusive);
-                // Legitimate IsReal use (NOT the outcome-vs-token conflation fixed elsewhere): this
-                // path is MULTI-THREAD only — OneThreadMode returned above. Here a non-real token means
-                // the hold-cell lock came back as a same-thread cross-mode dummy, so the absence hold
-                // cannot be guaranteed and must be refused. This is exactly ComponentBag.WriteUsable
+                // This path is MULTI-THREAD only — OneThreadMode returned above. Here a non-real token
+                // means the hold-cell lock came back as a same-thread cross-mode dummy, so the absence
+                // hold cannot be guaranteed and must be refused. This mirrors ComponentBag.WriteUsable
                 // (t.IsReal || OneThreadMode) with the OneThreadMode arm already peeled off by the guard.
                 if (rd.IsReal)
                 {
@@ -455,7 +443,7 @@ namespace AECC.Locking
             RWToken lockToken;
             // Gate the callback on the OPERATION OUTCOME, not on the token's realness: in
             // OneThreadMode the add succeeds but the token is a dummy, so keying on IsReal would
-            // (and previously did) skip the callback and leave a torn insert.
+            // skip the callback and leave a torn insert.
             if (TryAddOrChangeCore(key, value, out _, out lockToken, true, addOnly: true) == AddOutcome.Added)
             {
                 try { action(key, value); } catch { }
@@ -503,12 +491,12 @@ namespace AECC.Locking
             RWToken lockToken;
             TValue oldValue;
             AddOutcome outcome = TryAddOrChangeCore(key, value, out oldValue, out lockToken, true);
-            if (outcome != AddOutcome.Refused) // add OR change -> run (previously gated on IsReal)
+            if (outcome != AddOutcome.Refused) // add OR change -> run
             {
                 try { action(key, value, oldValue); } catch { }
             }
             lockToken.Dispose();
-            return outcome == AddOutcome.Added; // historical return: true iff a new key was added
+            return outcome == AddOutcome.Added; // true iff a new key was added
         }
 
         public void ExecuteReadLocked(TKey key, Action<TKey, TValue> action)
@@ -632,8 +620,7 @@ namespace AECC.Locking
         public bool Remove(TKey key) { return TryRemove(key, out _); }
 
         /// <summary>
-        /// Remove overload returning the removed value (parity with the old
-        /// LockedDictionary.Remove(key, out value) used by IECSObject.childECSObjects).
+        /// Remove overload returning the removed value (used by IECSObject.childECSObjects).
         /// </summary>
         public bool Remove(TKey key, out TValue value) { return TryRemove(key, out value); }
 

@@ -8,16 +8,14 @@ using AECC.Locking;
 
 public static partial class Defines
 {
-    // Фаза 1 (ТЗ 4.1.1): флаги конкурентности переехали в AECC.Kernel.Locking.KernelRuntime /
-    // LockDiagnostics (Kernel не может зависеть от Defines — у него 0 зависимостей).
-    // Здесь остаются ФОРВАРДИНГ-СВОЙСТВА со старыми именами: весь legacy-код, читающий и
-    // ПИШУЩИЙ Defines.OneThreadMode/ThreadsMode/IgnoreNonDangerousExceptions, продолжает
-    // работать дословно — присваивание мгновенно синхронизирует kernel-дефолт, чтение видит
-    // актуальное значение. Никакого окна рассинхронизации при любой очерёдности инициализации.
+    // Concurrency flags below are forwarding properties onto AECC.Kernel.Locking.KernelRuntime
+    // / LockDiagnostics (Kernel has zero dependencies, so it cannot depend on Defines):
+    // reading/writing these properties reads/writes the kernel state directly, with no
+    // synchronization window regardless of initialization order.
     //
-    // BREAKING CHANGE (санкционирован ТЗ 4.1.1): лок-хранилища (LockedDictionarySlim,
-    // ComponentBag, SharedLock, RWLock) фиксируют режим В МОМЕНТ СОЗДАНИЯ — переключение
-    // флага на лету больше не влияет на уже созданные структуры.
+    // Note: lock storages (LockedDictionarySlim, ComponentBag, SharedLock, RWLock) fix their
+    // concurrency mode at construction time — toggling these flags does not affect structures
+    // already created.
 
     static Defines()
     {
@@ -33,7 +31,7 @@ public static partial class Defines
     public static bool SerializatorTypesLog = true;
     public static bool HiddenKeyNotFoundLog = false;
 
-    /// <summary>Форвардинг в LockDiagnostics (гейт второстепенной диагностики лок-ядра). Дефолт исходный: true.</summary>
+    /// <summary>Forwards to LockDiagnostics (gates non-critical lock-diagnostics logging). Default: true.</summary>
     public static bool IgnoreNonDangerousExceptions
     {
         get { return LockDiagnostics.IgnoreNonDangerousExceptions; }
@@ -44,26 +42,26 @@ public static partial class Defines
     public static bool AOTMode = false;
     public static bool CutClientServerCollections = false;
 
-    /// <summary>Вести пер-сущностный лог удалённых компонентов
-    /// (EntitySerializationState.RemovedComponents). Потребитель — доставка удалений при
-    /// GDAP-сериализации (IncludeRemovedAvailable/Restricted, идеи 1.6/1.7); лог
-    /// накапливается между срезами и чистится срезом (EntityNetSerializer.SerializeEntity)
-    /// либо OnEntityDelete. В мирах, которые НЕ сериализуются (оффлайн-симуляция, бенчи),
-    /// срезов нет — лог растёт неограниченно на churn'е компонентов (медленная утечка).
-    /// false отключает ведение (Add не исполняется; Clear-страховки остаются).
-    /// Дефолт true — дословно прежнее поведение. Читается вживую в точках Add.</summary>
+    /// <summary>Tracks a per-entity log of removed components
+    /// (EntitySerializationState.RemovedComponents), consumed to deliver removals during
+    /// GDAP serialization (IncludeRemovedAvailable/Restricted). The log accumulates between
+    /// slices and is cleared by a slice (EntityNetSerializer.SerializeEntity) or by
+    /// OnEntityDelete. In worlds that are never serialized (offline simulation, benchmarks)
+    /// there are no slices to clear it, so the log grows unboundedly with component churn.
+    /// Setting this false disables tracking (Add is skipped; Clear safety nets remain).
+    /// Read live at each Add call site.</summary>
     public static bool TrackRemovedComponents = true;
 
     public static int TimerMinimumMSTick = 15;
 
-    /// <summary>Форвардинг в KernelRuntime.ThreadsMode. Дефолт исходный: true.</summary>
+    /// <summary>Forwards to KernelRuntime.ThreadsMode. Default: true.</summary>
     public static bool ThreadsMode
     {
         get { return KernelRuntime.ThreadsMode; }
         set { KernelRuntime.ThreadsMode = value; }
     }
 
-    /// <summary>Форвардинг в KernelRuntime.DefaultMode. Дефолт исходный: true (SingleThread).</summary>
+    /// <summary>Forwards to KernelRuntime.DefaultMode. Default: true (SingleThread).</summary>
     public static bool OneThreadMode
     {
         get { return KernelRuntime.DefaultMode == ConcurrencyMode.SingleThread; }

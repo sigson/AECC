@@ -4,18 +4,12 @@ using System.Collections.Generic;
 namespace AECC.Core
 {
     /// <summary>
-    /// Identity-sidecar (идея 1.11, решение заказчика 0.4.2 — ОБЯЗАН ОСТАТЬСЯ): значения
-    /// привязаны к instanceId и переживают подмену инстанса при клиентском UpdateDeserialize.
+    /// Identity-sidecar: значения привязаны к instanceId и переживают подмену инстанса при
+    /// клиентском UpdateDeserialize.
     ///
-    /// Фаза 3, шаг 8 (ТЗ 4.5.8): публичная поверхность дословно прежняя, бэкенд —
-    /// потокобезопасный <see cref="SharedFieldTable"/> (чинит гонку 6.3). Статический API
-    /// работает в процессном скоупе (ProcessScope = 0); пер-мировые данные и числовые
-    /// системные слоты — через SharedFieldTable напрямую (потребители кэшируют ссылку
-    /// на строку — мандат горячего пути 4.5.8в).
-    ///
-    /// BREAKING (журналируется): убран публичный сырой Dictionary
-    /// ECSSharedDictionaryCache.fieldsCache — прямой доступ к небезопасному кэшу и был
-    /// источником гонки; замены — статический API ниже или SharedFieldTable.
+    /// Бэкенд — потокобезопасный <see cref="SharedFieldTable"/>. Статический API работает в
+    /// процессном скоупе (ProcessScope = 0); пер-мировые данные и числовые системные слоты —
+    /// через SharedFieldTable напрямую (потребители кэшируют ссылку на строку для горячего пути).
     /// </summary>
     public class ECSSharedField<T> : IDisposable
     {
@@ -23,8 +17,7 @@ namespace AECC.Core
 
         private readonly long entityId;
         private readonly string fieldName;
-        // Мандат 4.5.8в: строка идентичности резолвится ОДИН РАЗ при конструировании,
-        // дальше — работа по ссылке.
+        // Строка идентичности резолвится один раз при конструировании, дальше — работа по ссылке.
         private readonly SharedFieldTable.Row row;
 
         public ECSSharedField(long id, string name, T value)
@@ -33,8 +26,7 @@ namespace AECC.Core
             fieldName = name;
             row = SharedFieldTable.GetRow(SharedFieldTable.ProcessScope, id);
 
-            // Семантика прежнего конструктора: существующее значение выигрывает,
-            // иначе кладём переданное (теперь — атомарно).
+            // Существующее значение выигрывает, иначе кладём переданное (атомарно).
             object stored = row.Named.GetOrAdd(name, (object)value);
             Value = stored is T typed ? typed : value;
         }
@@ -70,7 +62,7 @@ namespace AECC.Core
             {
                 return typedValue;
             }
-            // Семантика прежнего кода: значение чужого типа под этим именем — заменить своим.
+            // Значение чужого типа под этим именем — заменить своим.
             T newValue = valueFactory();
             row.Named[name] = newValue;
             return newValue;
@@ -131,8 +123,8 @@ namespace AECC.Core
         }
 
         /// <summary>
-        /// Удаляет все значения для конкретного ID. Дисциплина идеи 1.11: чистит идентичность
-        /// ПО ВСЕМ скоупам (процессному и пер-мировым) — контракт «OnRemoved вычищает всё».
+        /// Удаляет все значения для конкретного ID по всем скоупам (процессному и пер-мировым) —
+        /// контракт «OnRemoved вычищает всё».
         /// </summary>
         public static bool RemoveAllCachedValuesForId(long id)
         {
@@ -179,7 +171,7 @@ namespace AECC.Core
 
         public void Dispose()
         {
-            //row.Named.TryRemove(fieldName, out _);  // прежняя семантика: Dispose ничего не чистит
+            // Dispose намеренно ничего не чистит: значение остаётся в SharedFieldTable по identity.
         }
     }
 }

@@ -15,7 +15,7 @@ namespace AECC.Locking
     ///      holds (units), giving R/W reentry (dummy) and cross-mode (throw/dummy) without the
     ///      weight of ReaderWriterLockSlim's recursion registry.
     ///
-    /// Semantics preserved from the old RWLock:
+    /// Semantics:
     ///   - granular read/write per (entity, component);
     ///   - long held sections with multiple concurrent readers;
     ///   - real blocking wait (no core-burning spin) on contention;
@@ -74,12 +74,11 @@ namespace AECC.Locking
 
         // ───────────────────────── thread-static accounting ─────────────────────────
         // ONE struct array holding only what THIS thread currently owns. AoS (not parallel arrays):
-        // a single thread-static reference + a single contiguous scan. The previous SoA version did
-        // ~5 thread-static lookups per call plus two thread-static array loads per scan iteration;
-        // thread-static access is the dominant fixed cost of the uncontended fast path (and far more
-        // expensive under Mono/IL2CPP than CoreCLR). Each Enter/Exit now reads the array into a local
-        // ONCE and scans that local. Feature is UNCHANGED: same-mode reentry -> depth++ (dummy),
-        // cross-mode -> throw/dummy by flag, order-independent disposal via the depth counter.
+        // a single thread-static reference + a single contiguous scan. Thread-static access is the
+        // dominant fixed cost of the uncontended fast path (and far more expensive under Mono/IL2CPP
+        // than CoreCLR), so each Enter/Exit reads the array into a local ONCE and scans that local.
+        // Same-mode reentry -> depth++ (dummy); cross-mode -> throw/dummy by flag; disposal order is
+        // irrelevant thanks to the depth counter.
         private struct HeldEntry
         {
             public object Container;
@@ -120,13 +119,12 @@ namespace AECC.Locking
                     }
                     if (ThrowOnOrderViolation)
                         throw new LockRecursionException(want == 1 ? "write lock under read lock" : "read lock under write lock");
-                    // DEADLOCK ESCAPE (решение заказчика 0.4.5, восстановление ТЗ 4.1.2):
-                    // семантика прежняя — dummy no-op и продолжение исполнения (matches old
-                    // "DEADLOCK ESCAPE" в RWLock), но факт БОЛЬШЕ НЕ МОЛЧИТ: Error-репорт летит
-                    // безусловно, stack trace — за LockDiagnostics.CaptureEscapeStackTrace.
-                    // Ветка холодная: на горячем пути эта диагностика стоит ноль.
+                    // DEADLOCK ESCAPE: a cross-mode same-thread reentry is a self-deadlock. Rather than
+                    // hang the thread, we report it loudly (Error-level, unconditionally; stack trace
+                    // only if LockDiagnostics.CaptureEscapeStackTrace is set) and continue as a dummy
+                    // no-op. This branch is cold: on the hot path this diagnostic costs nothing.
                     LockDiagnostics.ReportDeadlockEscape(want == 1);
-                    return false;            // cross-mode -> dummy no-op (matches old "DEADLOCK ESCAPE")
+                    return false;            // cross-mode -> dummy no-op
                 }
             }
 

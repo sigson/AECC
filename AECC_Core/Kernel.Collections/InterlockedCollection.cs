@@ -17,11 +17,11 @@ namespace AECC.Extensions
     public static class InterlockedCollection
     {
         /// <summary>
-        /// Zero-alloc вложенная блокировка (внешний координирующий + внутренний по коллекции).
-        /// В OneThreadMode реального захвата нет. Monitor реентрантен, поэтому повтор того же
-        /// объекта во внешнем и внутреннем гейте безопасен. null-гейт пропускается (внешняя
-        /// блокировка теперь обязанность вызывающего; целостность коллекции всегда защищена
-        /// внутренним гейтом).
+        /// Zero-alloc nested lock: an outer coordinating gate plus an inner gate on the
+        /// collection itself. In OneThreadMode no lock is actually taken. Monitor is
+        /// reentrant, so passing the same object as both outer and inner gate is safe.
+        /// A null gate is simply skipped (the caller owns the outer lock, if any;
+        /// collection integrity is always protected by the inner gate).
         /// </summary>
         private readonly struct DualGate : IDisposable
         {

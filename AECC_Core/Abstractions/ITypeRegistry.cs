@@ -4,43 +4,40 @@ using System.Collections.Generic;
 namespace AECC.Abstractions
 {
     /// <summary>
-    /// Реестр типов (ТЗ 4.3). Инкапсулирует бывшие статики
-    /// <c>EntitySerializer.TypeStorage / TypeIdStorage / TypeStringStorage</c> и расширения
-    /// <c>TypeId() / IdToECSType() / NameToECSType()</c>.
+    /// Type registry mapping between .NET <see cref="Type"/> and its numeric/name identity.
     ///
-    /// Идея 1.14 неприкосновенна: атрибут <c>[TypeUid(int)]</c> — единственный источник
-    /// идентичности типа; механизм «reflection-скан IDObject-наследников при инициализации +
-    /// выставление статических Id-бэкинг-филдов» сохраняется.
+    /// The <c>[TypeUid(int)]</c> attribute is the single source of type identity; on
+    /// initialization the registry scans IDObject descendants via reflection and sets their
+    /// static Id backing fields accordingly.
     ///
-    /// МАНДАТ ГОРЯЧЕГО ПУТИ (ТЗ 4.3, анти-бомба 7.1): type-id мирo-независим (детерминирован
-    /// атрибутом) → карта процессно-глобальная, immutable после инициализации; интерфейс —
-    /// это владение/инициализация/тестируемость, а НЕ точка прохода горячего пути: ссылка на
-    /// реестр кэшируется полем при конструировании потребителя; резолв через IWorldContext на
-    /// каждый вызов ЗАПРЕЩЁН. <see cref="GetId"/> обязан быть мемоизирован (дефект 6.1:
-    /// прежний Type.TypeId() делал GetCustomAttribute + аллокацию + try/catch на каждый вызов).
+    /// Hot-path contract: type-id is world-independent (determined by the attribute), so the
+    /// map is process-global and immutable after initialization. The interface exists for
+    /// ownership/initialization/testability, not as a hot-path indirection: consumers should
+    /// cache a reference to the registry in a field at construction time rather than
+    /// resolving it through IWorldContext on every call. <see cref="GetId"/> must be memoized.
     /// </summary>
     public interface ITypeRegistry
     {
         /// <summary>
-        /// Id по атрибуту [TypeUid] (семантика бывшего <c>Type.TypeId()</c>): работает и для
-        /// незарегистрированных типов, 0 при отсутствии атрибута. Мемоизировано.
+        /// Id from the [TypeUid] attribute. Works for unregistered types too; returns 0 if the
+        /// attribute is absent. Memoized.
         /// </summary>
         long GetId(Type type);
 
-        /// <summary>Зарегистрированный тип по id (семантика <c>long.IdToECSType()</c>): null, если не зарегистрирован.</summary>
+        /// <summary>Registered type by id; null if not registered.</summary>
         Type GetType(long id);
 
-        /// <summary>Зарегистрированный тип по короткому имени (семантика <c>string.NameToECSType()</c>): null, если нет.</summary>
+        /// <summary>Registered type by short name; null if not found.</summary>
         Type GetType(string name);
 
-        /// <summary>Id зарегистрированного типа (семантика <c>Type.IdToECSType()</c>): 0, если не зарегистрирован.</summary>
+        /// <summary>Id of a registered type; 0 if not registered.</summary>
         long GetRegisteredId(Type type);
 
-        /// <summary>Try-варианты для горячих путей без исключений (SearchGraph, восстановление компонентов).</summary>
+        /// <summary>Exception-free variants for hot paths (e.g. SearchGraph, component restore).</summary>
         bool TryGetType(long id, out Type type);
         bool TryGetRegisteredId(Type type, out long id);
 
-        /// <summary>Все зарегистрированные пары Тип→id (потребитель — инициализация индексов ContractsManager).</summary>
+        /// <summary>All registered Type -> id pairs (used to initialize ContractsManager indexes).</summary>
         IEnumerable<KeyValuePair<Type, long>> RegisteredTypes { get; }
     }
 }

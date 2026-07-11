@@ -18,14 +18,13 @@ namespace AECC.Collections
     {
         private readonly ConcurrentDictionary<TKey, TValue> _dictionary;
 
-        // Сделали публичным, чтобы можно было использовать в LogAction при формировании сообщения
+        // Публичное, чтобы можно было использовать в LogAction при формировании сообщения
         public string InstanceId { get; } = Guid.NewGuid().ToString("N").Substring(0, 8);
 
-        // ИЗМЕНЕНИЕ: Теперь Action принимает название операции, Ключ и Значение.
-        // Используем TKey? и TValue?, так как в некоторых операциях (Clear, Ctor) их может не быть.
+        // Action принимает название операции, ключ и значение.
+        // Используем значения по умолчанию для TKey/TValue, так как в некоторых операциях (Clear, Ctor) их может не быть.
         public Action<string, LoggingConcurrentDictionary<TKey, TValue>, TKey, TValue> LogAction { get; set; }
 
-        // ИЗМЕНЕНИЕ: Метод Log теперь принимает типизированные аргументы
         private void Log(string operation, TKey key = default, TValue value = default)
         {
             if (LogAction == null) return;
@@ -111,10 +110,9 @@ namespace AECC.Collections
             if (key == null) throw new ArgumentNullException(nameof(key));
             if (valueFactory == null) throw new ArgumentNullException(nameof(valueFactory));
 
-            // ДЕФЕКТ №23 (предсуществующий, пойман сборкой заказчика): 3-арг перегрузка
-            // ConcurrentDictionary.GetOrAdd<TArg> отсутствует в netstandard2.0 (появилась
-            // в .NET Core 2.0). Эмулируем через 2-арг с захватом factoryArgument в
-            // замыкание — семантика идентична (аргумент фиксирован на время вызова).
+            // 3-арг перегрузка ConcurrentDictionary.GetOrAdd<TArg> недоступна в netstandard2.0.
+            // Эмулируем через 2-арг с захватом factoryArgument в замыкание — семантика идентична
+            // (аргумент фиксирован на время вызова).
             var result = _dictionary.GetOrAdd(key, k =>
             {
                 var val = valueFactory(k, factoryArgument);

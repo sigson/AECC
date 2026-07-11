@@ -8,7 +8,7 @@ using System.IO;
 using AECC.Core.Logging;
 using static AECC.Serialization.EntitySerializer;
 
-using AECC.Core; // видимость Core больше не наследуется от родительского неймспейса
+using AECC.Core;
 
 namespace AECC.Serialization
 {

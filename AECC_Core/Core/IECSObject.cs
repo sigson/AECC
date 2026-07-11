@@ -26,18 +26,16 @@ namespace AECC.Core
         [System.NonSerialized]
         public object SerialLocker = new object();
 
-        /// <summary>ФАЗА 4, шаг 3 (ТЗ 4.4/4.7): opaque-слот пер-объектной сериализационной
-        /// тени — модель ХРАНИТ, не интерпретирует (внутри живёт
-        /// AECC.Core.Serialization.SerializationShadow: автомат NoData/Changed/Freezed +
-        /// retry-счётчик + логика Snapshot/Restore/AfterRestore). Слот вместо внешней
-        /// таблицы (анти-бомба 7.4). [NonSerialized] воспроизводит дословно прежний сброс
-        /// у десериализованного инстанса: ChangesState → NoData, deserializeErrorCount → 0.</summary>
+        /// <summary>Opaque-слот пер-объектной сериализационной тени — модель ХРАНИТ, не
+        /// интерпретирует (внутри живёт AECC.Core.Serialization.SerializationShadow: автомат
+        /// NoData/Changed/Freezed + retry-счётчик + логика Snapshot/Restore/AfterRestore).
+        /// [NonSerialized]: у десериализованного инстанса тень пересоздаётся с нуля
+        /// (ChangesState → NoData, deserializeErrorCount → 0).</summary>
         [System.NonSerialized]
         [IgnoreDataMember]
         public object serializationShadow;
 
-        // Бывшее [NonSerialized]-поле — форвардинг в тень (владение у Serialization;
-        // внешние касания, включая сетку 9(г), работают без изменений).
+        // Форвардинг в тень (владение у Serialization; внешние касания работают без изменений).
         [IgnoreDataMember]
         public IECSObjectSerializedStateMode ChangesState
         {
@@ -47,8 +45,7 @@ namespace AECC.Core
 
         // WIRE-поле протокола: «отправитель материализовал свежее зеркало детей».
         // Остаётся сериализуемыми ДАННЫМИ модели (получатель читает его из пришедшего
-        // инстанса); интерпретация — только в SerializationShadow (сверено с ТЗ 4.4 /
-        // стратегией 3.4; см. эскалацию в журнале).
+        // инстанса); интерпретация — только в SerializationShadow.
         public bool HasChildChanges = true; //after creation = yes
         public long ownerECSObjectId;
         public bool ChildDispose = false; //for db component may be true
@@ -71,13 +68,11 @@ namespace AECC.Core
         /// <summary>
         /// serialization container where dictionary key is child ECSObject instanceId and value is array of id path with types to real IECSObject, example idlong;cmp / idlong;ent where cmp - component, ent - entity
         /// </summary>
-        // Оптимизация аллокаций: зеркало детей сериализации теперь ЛЕНИВОЕ. Прежде каждый
-        // IECSObject (в т.ч. КАЖДЫЙ инстанс компонента — их swap порождает сотни тысяч) жадно
-        // аллоцировал пустой словарь, который у листовых объектов не используется никогда
-        // (в снапшоте это ~400K Dictionary<long, IECSObjectPathContainer>). Поле ОСТАЁТСЯ полем
-        // с тем же именем — набор сериализуемых членов не меняется, null round-trip'ится как
-        // null (тот же приём, что уже применён к ECSComponent.ComponentGroups). Материализуется
+        // Зеркало детей сериализации ленивое: поле остаётся полем с тем же именем (набор
+        // сериализуемых членов не меняется, null round-trip'ится как null), но материализуется
         // только пайплайном сериализации (SnapshotPass); все прочие обращения null-guard'нуты.
+        // Так листовые объекты (например компоненты), у которых зеркало не используется,
+        // не аллоцируют для него словарь.
         public Dictionary<long, IECSObjectPathContainer> childECSObjectsId = null;
         [System.NonSerialized]
         private LockedDictionarySlim<long, IECSObject> storagechildECSObjects;
@@ -87,8 +82,8 @@ namespace AECC.Core
             {
                 if (storagechildECSObjects == null)
                 {
-                    // PHASE 1: world-level child tree on LockedDictionarySlim, HoldKeys OFF
-                    // (children are never reserved by absence). Per-cell RWLock eliminated.
+                    // World-level child tree on LockedDictionarySlim, HoldKeys OFF
+                    // (children are never reserved by absence).
                     storagechildECSObjects = new LockedDictionarySlim<long, IECSObject>();
                 }
                 return storagechildECSObjects;
@@ -99,17 +94,15 @@ namespace AECC.Core
             }
         }
         
-        /// <summary>Транзитный внутренний доступ пайплайна сериализации к живому словарю
-        /// детей (материализация зеркала в SnapshotPass, чистка лишних в RestorePass —
-        /// идея 1.4/1.6). При физическом выносе сборки Serialization (шаг 4 фазы 4) —
-        /// InternalsVisibleTo либо enumerate-поверхность; решить там.</summary>
+        /// <summary>Внутренний доступ пайплайна сериализации к живому словарю детей
+        /// (материализация зеркала в SnapshotPass, чистка лишних в RestorePass).</summary>
         internal LockedDictionarySlim<long, IECSObject> ChildrenForSerialization
         {
             get { return childECSObjects; }
         }
 
         /// <summary>Мост тени к пользовательскому хуку (хук остаётся protected-API модели,
-        /// вызывается сериализацией через shadow — ТЗ 4.4).</summary>
+        /// вызывается сериализацией через shadow).</summary>
         internal void RunAfterDeserializationImpl()
         {
             AfterDeserializationImpl();
@@ -266,13 +259,10 @@ namespace AECC.Core
             
         }
 
-        // ФАЗА 4, шаг 3 (ТЗ 4.4/4.7): тела SerializationProcess/DeserializationProcess
-        // выселены ДОСЛОВНО в AECC.Core.Serialization.SerializationShadow
-        // (SnapshotPass/RestorePass) — модель автомат инвалидации больше не интерпретирует.
+        // Тела SerializationProcess/DeserializationProcess живут в
+        // AECC.Core.Serialization.SerializationShadow (SnapshotPass/RestorePass) — эта модель
+        // автомат инвалидации не интерпретирует.
 
-        /// <summary>
-        /// s
-        /// </summary>
         private void AfterDeserializationChildChanges()
         {
             
@@ -311,9 +301,8 @@ namespace AECC.Core
 
         }
 
-        // ФАЗА 4, шаг 3: deserializeErrorCount и вся пост-десериализация (профильная
-        // ветка, событийный retry с register-then-recheck, cap+dead-letter — идея 1.8)
-        // выселены ДОСЛОВНО в SerializationShadow.AfterRestore.
+        // deserializeErrorCount и вся пост-десериализация (профильная ветка, событийный
+        // retry с register-then-recheck, cap+dead-letter) живут в SerializationShadow.AfterRestore.
         public void AfterDeserialization()
         {
             SerializationShadow.Of(this).AfterRestore(this);

@@ -54,9 +54,8 @@ namespace AECC.Extensions.ThreadingSync
 #endif
         }
 
-        /// <summary>Единственный на процесс делегат исполнения action-as-state для
-        /// ThreadPool-ветки RunAsync (см. комментарий в теле): try/catch-семантика
-        /// дословно прежняя, но без пер-вызовных замыканий.</summary>
+        /// <summary>Single process-wide delegate used to invoke an action passed as
+        /// ThreadPool work-item state, avoiding a per-call closure allocation.</summary>
         private static readonly WaitCallback RunActionFromState = state =>
         {
             try
@@ -100,11 +99,8 @@ namespace AECC.Extensions.ThreadingSync
             {
                 if ((Defines.ThreadsMode || forceThreadmode) && !forceAsync)
                 {
-                    // ОПТИМИЗАЦИЯ ПАМЯТИ (work-item flood): прежняя лямбда-обёртка
-                    // `_ => { try { action(); } ... }` захватывала action и на КАЖДЫЙ вызов
-                    // аллоцировала DisplayClass + Action + WaitCallback (в снапшоте — по ~4M
-                    // каждого). Теперь action передаётся как state в ЕДИНСТВЕННЫЙ кэшированный
-                    // WaitCallback — на вызов остаётся только внутренний work item рантайма.
+                    // action is passed as state to a single cached WaitCallback to avoid
+                    // allocating a new closure/WaitCallback on every queued work item.
                     ThreadPool.QueueUserWorkItem(RunActionFromState, action);
                     // Thread thread = new Thread(() =>
                     // {
@@ -258,7 +254,7 @@ namespace AECC.Extensions.ThreadingSync
                 {
                     NetworkingService.instance.ExecuteInstruction(() => UnityEngine.Debug.LogException(t.Exception.Flatten().InnerException));
                 }
-            });//, TaskScheduler.FromCurrentSynchronizationContext());
+            });
             return task;
         }
     }

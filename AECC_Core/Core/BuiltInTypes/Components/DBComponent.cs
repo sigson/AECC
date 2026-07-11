@@ -28,8 +28,8 @@ namespace AECC.Core.BuiltInTypes.Components
 
         public Dictionary<IECSObjectPathContainer, List<dbRow>> serializedDB = new Dictionary<IECSObjectPathContainer, List<dbRow>>();
 
-        // ФАЗА 4, шаг 2 (ТЗ 4.7): мост участника сериализации — сериализатор/хранилище
-        // зовут интерфейс, не зная конкретного DBComponent. Семантика дословно прежняя.
+        // Мост участника сериализации: сериализатор/хранилище зовут интерфейс,
+        // не зная конкретного DBComponent.
         void AECC.Abstractions.ISerializationParticipant.BeforeSnapshot(bool serializeOnlyChanged, bool clearChanged)
         {
             SerializeDB(serializeOnlyChanged, clearChanged);
@@ -66,14 +66,12 @@ namespace AECC.Core.BuiltInTypes.Components
     [System.Serializable]
     public class dbRow
     {
-        //[System.NonSerialized]
         public long componentInstanceId;
         public long componentId;
         public object component;
         public ComponentState componentState;
     }
 
-    // Logging level enum
     public enum DBLoggingLevel
     {
         None = 0,           // No logging
@@ -89,14 +87,14 @@ namespace AECC.Core.BuiltInTypes.Components
         static public new long Id { get; set; } = 12;
 
         /// <summary>
-        /// Глубина выполнения UnserializeDB (re-entrancy-safe). Заменяет эвристику по StackTrace:
-        /// пока > 0, отсутствие компонента в БД во время клиентской десериализации — ожидаемо.
+        /// Глубина выполнения UnserializeDB (re-entrancy-safe): пока > 0, отсутствие
+        /// компонента в БД во время клиентской десериализации — ожидаемо.
         /// </summary>
         [System.NonSerialized]
         private int _unserializeDepth = 0;
 
         /// <summary>
-        /// Единый авторитет синхронизации DB — StabilizationGate сущности-владельца (бывш. StabilizationLocker).
+        /// Единый авторитет синхронизации DB — StabilizationGate сущности-владельца.
         /// До привязки к сущности (фабричный контекст) ownerEntity == null и доступ
         /// гарантированно однопоточный, поэтому реальный захват не нужен (no-op scope).
         /// </summary>
@@ -136,15 +134,11 @@ namespace AECC.Core.BuiltInTypes.Components
             Null
         }
 
-        // ═══ ФАЗА 7 (ТЗ 4.9): разрез DBComponent → DbStore + DbSerialization, слайс 1 ═══
-        // Владение ДАННЫМИ разложено по осям изменения: DbStore — живая сторона
-        // (строки-состояния, владельцы, dirty), DbSerialization — restore-сторона
-        // (пути владельцев, NonEO-парковка retry, счётчик проверок). Всё перенесённое
-        // было [NonSerialized] — wire-контракт не тронут; serializedDB остаётся
-        // ФИЗИЧЕСКИМ сериализуемым полем компонента (wire-данные, суждение фазы 4
-        // о HasChildChanges). Публичный API — делегирующие свойства с прежними именами:
-        // ~200 внутренних касаний и сетка 9(к) не тронуты. Слайс 2 (перенос ЛОГИКИ
-        // Serialize/Unserialize/AfterDeserialize в DbSerialization) — следующий шаг.
+        // DBComponent разложен на DbStore + DbSerialization по осям изменения:
+        // DbStore — живая сторона (строки-состояния, владельцы, dirty), DbSerialization —
+        // restore-сторона (пути владельцев, NonEO-парковка retry, счётчик проверок).
+        // serializedDB остаётся ФИЗИЧЕСКИМ сериализуемым полем компонента (wire-данные).
+        // Публичный API — делегирующие свойства с прежними именами.
 
         public sealed class DbStore
         {
@@ -306,10 +300,10 @@ namespace AECC.Core.BuiltInTypes.Components
                 if (retryNullEntityOwner)
                 {
                     owner.serializedDBNonEO.ForEach(x => owner.serializedDB[x.Key] = x.Value.Item1);
-                    // ДЕФЕКТ №22(а), пойман сеткой 9(к): похороненная (cap 10) строка
-                    // удалялась только из NonEO — её слитая копия ВЫЖИВАЛА в owner.serializedDB
-                    // и валила owner.AfterDeserializeDB голым индексатором. Собираем ключи
-                    // dead-letter'а и выносим их вместе со сливом ниже.
+                    // Строки, чей владелец так и не появился (cap 10), должны быть удалены
+                    // и из NonEO, и из их слитой копии в owner.serializedDB — иначе
+                    // owner.AfterDeserializeDB упадёт на них голым индексатором. Собираем
+                    // ключи dead-letter'а и выносим их вместе со сливом ниже.
                     var deadLettered = new List<IECSObjectPathContainer>();
 
                     foreach (var serializedRow in owner.serializedDB)
@@ -336,7 +330,7 @@ namespace AECC.Core.BuiltInTypes.Components
                                 }
                                 NLogger.Log("lost components destroyed");
                                 owner.serializedDBNonEO.Remove(serializedRow.Key);
-                                deadLettered.Add(serializedRow.Key); // №22(а): в вынос из owner.serializedDB
+                                deadLettered.Add(serializedRow.Key);
                                 continue;
                             }
 
@@ -351,15 +345,15 @@ namespace AECC.Core.BuiltInTypes.Components
                             }
                         }
                     }
-                    deadLettered.ForEach(k => owner.serializedDB.Remove(k)); // №22(а)
+                    deadLettered.ForEach(k => owner.serializedDB.Remove(k));
                     if (owner.serializedDBNonEO.Count > 0)
                     {
                         owner.serializedDBNonEO.ForEach(x => owner.serializedDB.Remove(x.Key));
                         owner.serializedDBNonEO.Where(x => x.Value.Item2 > 10).ToList().ForEach(x => owner.serializedDBNonEO.Remove(x.Key));
 
-                        // Событийная замена ретрай-таймера: повторить при приходе недостающей
-                        // сущности-владельца. Cap (10) и dead-letter (owner.RemoveComponentsByOwner)
-                        // остаются в блоке retryNullEntityOwner выше и срабатывают на сливах.
+                        // Событийный retry: повторить при приходе недостающей сущности-владельца.
+                        // Cap (10) и dead-letter (owner.RemoveComponentsByOwner) остаются в блоке
+                        // retryNullEntityOwner выше и срабатывают на сливах.
                         var registry = owner.ECSWorldOwner?.entityManager?.PendingDeserialization;
                         if (registry != null)
                         {
@@ -412,14 +406,11 @@ namespace AECC.Core.BuiltInTypes.Components
                                 unserComp.AfterDeserialization();
                                 // Реакции эмитятся единожды в owner.AfterDeserializeDB по componentState
                                 // (Created→Added, Changed→Change, Removed→Removing). Здесь только
-                                // материализация компонента в owner.DB — без дублирующей AddedReaction,
-                                // которая раньше давала двойную реакцию для Changed и "мигание"
-                                // (Added→Removing) для Removed.
+                                // материализация компонента в owner.DB, без дублирующей AddedReaction.
                                 addedCount++;
                             }
                             else
                             {
-                                //unserComp.componentManagers = components[unserComp.instanceId].Item1.componentManagers;
                                 components[unserComp.instanceId] = (unserComp, component.componentState);
                                 unserComp.AfterDeserialization();
                                 updatedCount++;
@@ -460,9 +451,8 @@ namespace AECC.Core.BuiltInTypes.Components
                 var entityRowValues = entityRow.Value.ToList();
                 for (int i = 0; i < entityRowValues.Count; i++)
                 {
-                    // ДЕФЕКТ №22(б): голый индексатор падал KeyNotFound'ом на строке,
-                    // чей владелец не был восстановлен (dead-letter/гонка) — теперь скип
-                    // с ERRORDB-логом (реакции по несуществующему владельцу не эмитим).
+                    // Владелец мог не восстановиться (dead-letter/гонка) — тогда строка
+                    // скипается с ERRORDB-логом, реакции по несуществующему владельцу не эмитим.
                     if (!owner.DB.TryGetValue(entityRow.Key.CacheInstanceId, out var ownerList) || ownerList == null)
                     {
                         NLogger.LogErrorDB($"AfterDeserializeDB: owner {entityRow.Key.CacheInstanceId} absent in live owner.DB — row skipped");
@@ -1105,10 +1095,9 @@ namespace AECC.Core.BuiltInTypes.Components
 
         #endregion
 
-        // ФАЗА 7, слайс 2: тела Serialize/Unserialize/AfterDeserializeDB перенесены
-        // ДОСЛОВНО в DbSerialization (owner-параметр — механика SerializationShadow
-        // фазы 4). Шеллы держат virtual-диспатч и публичный API; retry/NonEO/dead-letter
-        // (фикс №22) — у владельца логики.
+        // Тела Serialize/Unserialize/AfterDeserializeDB живут в DbSerialization (owner
+        // передаётся параметром); эти методы — тонкие шеллы, держащие virtual-диспатч
+        // и публичный API.
         public override void SerializeDB(bool serializeOnlyChanged = false, bool clearChanged = true)
         {
             Serial.SerializeDB(this, serializeOnlyChanged, clearChanged);

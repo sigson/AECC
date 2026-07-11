@@ -21,7 +21,6 @@ namespace AECC.Collections
 
         private void AddImpl(TKey key, TValue value)
         {
-            //lock (dictionary)
             {
                 dictionary.Add(key, value);
                 keys.Add(key);
@@ -30,19 +29,16 @@ namespace AECC.Collections
 
         private TValue GetImpl(TKey key)
         {
-            //lock (dictionary)
             return dictionary[key];
         }
 
         public TValue Get(int index)
         {
-            //lock (dictionary)
             return dictionary[keys[index]];
         }
 
         private void SetImpl(TKey key, TValue value)
         {
-            //lock (dictionary)
             {
                 if (dictionary.ContainsKey(key))
                     dictionary[key] = value;
@@ -56,7 +52,6 @@ namespace AECC.Collections
 
         private bool RemoveImpl(TKey key)
         {
-            //lock (dictionary)
             {
                 keys.Remove(key);
                 return dictionary.Remove(key);
@@ -65,7 +60,6 @@ namespace AECC.Collections
 
         public bool Remove(int index)
         {
-            //lock(dictionary)
             {
                 var ret = dictionary.Remove(keys[index]);
                 keys.RemoveAt(index);
@@ -75,7 +69,6 @@ namespace AECC.Collections
 
         private void ClearImpl()
         {
-            //lock (dictionary)
             {
                 dictionary.Clear();
                 keys.Clear();

@@ -6,26 +6,21 @@ using AECC.Locking;
 namespace AECC.Core.Serialization
 {
     /// <summary>
-    /// Пер-сущностное сериализационное состояние (фаза 4, шаг 1; ТЗ 4.7): dirty-set,
-    /// removed-список, binSerializedEntity, emptySerialized. ВЛАДЕНИЕ — у Serialization:
-    /// модель и хранилище эти данные больше не объявляют.
+    /// Пер-сущностное сериализационное состояние: dirty-set, removed-список,
+    /// binSerializedEntity, emptySerialized. ВЛАДЕНИЕ — у Serialization: модель и
+    /// хранилище эти данные не объявляют.
     ///
-    /// ОПТИМИЗАЦИЯ ПАМЯТИ: бывшее «зеркало компонентов» (SerializationContainer)
-    /// УДАЛЕНО ПОЛНОСТЬЮ. Живая копия дублировала ComponentStore по тому же ключу
-    /// typeUid (в снапшоте — ConcurrentDictionary Tables/Node + Cell на каждую сущность,
-    /// ~220 МБ на 100k сущностей); полносрезная сериализация читает живой Store напрямую,
-    /// а транзитный буфер десериализации стал локальным словарём пайплайна
-    /// (DeserializeStorage возвращает, Restore/Update принимают параметром).
+    /// Полносрезная сериализация читает живой ComponentStore напрямую (без отдельного
+    /// зеркала компонентов); транзитный буфер десериализации — локальный словарь
+    /// пайплайна (DeserializeStorage возвращает, Restore/Update принимают параметром).
     ///
     /// Хранение — OPAQUE-СЛОТ на сущности (ECSEntity.serializationState типа object:
-    /// модель хранит, не интерпретирует) — ДЕФОЛТ по ТЗ: внешняя таблица instanceId→state
-    /// дала бы лукап+контенцию на каждом чейндже. Горячие пути (dirty-запись на каждый
-    /// change) идут через кэш-ссылку EntityComponentStorage._serState — по стоимости это
-    /// прежнее чтение поля хранилища.
+    /// модель хранит, не интерпретирует) — внешняя таблица instanceId→state дала бы
+    /// лукап и контенцию на каждом чейндже. Горячие пути (dirty-запись на каждый change)
+    /// идут через кэш-ссылку EntityComponentStorage._serState.
     ///
-    /// Пайплайн-методы (Sliced/Serialize/Deserialize/Restore) переходно остаются на
-    /// EntityComponentStorage; при выносе сборки AECC.Serialization они становятся её
-    /// внутренними методами (санкционированный breaking ТЗ 4.7).
+    /// Пайплайн-методы (Sliced/Serialize/Deserialize/Restore) живут на
+    /// EntityComponentStorage.
     /// </summary>
     public sealed class EntitySerializationState
     {
@@ -41,8 +36,7 @@ namespace AECC.Core.Serialization
 
         /// <summary>
         /// Состояние из opaque-слота сущности (создаёт при первом обращении).
-        /// Горячие потребители кэшируют результат в поле (мандат ТЗ 4.7 — слот вместо таблицы,
-        /// ссылка вместо повторных резолвов).
+        /// Горячие потребители кэшируют результат в поле (ссылка вместо повторных резолвов).
         /// </summary>
         public static EntitySerializationState Of(ECSEntity entity)
         {

@@ -5,13 +5,9 @@ using DefaultEcs;
 namespace AECC.Query
 {
     /// <summary>
-    /// ФАЗА 5 (ТЗ 4.6, решение 0.4.3): ГЕРМЕТИЗАЦИЯ DefaultEcs — движок остаётся штатным
-    /// (осознанный выбор: пулы и запросная машинерия окупаются при росте индекса), но
-    /// становится ПРИВАТНОЙ деталью Query за этим internal-интерфейсом: ни один другой
-    /// модуль о нём не знает, NuGet-зависимость не расползается по графу сборок
-    /// (приёмка фазы: PackageReference DefaultEcs — только у AECC.Query).
-    /// Замена на плоский массив — только отдельный эксперимент с бенчмарк-гейтом
-    /// «не хуже DefaultEcs по Set/Get/полному циклу Search» (ТЗ 4.6).
+    /// Изолирует DefaultEcs как приватную деталь реализации Query за этим internal-интерфейсом:
+    /// ни один другой модуль о нём не знает, и NuGet-зависимость на DefaultEcs не расползается
+    /// по графу сборок (PackageReference DefaultEcs — только у AECC.Query).
     /// </summary>
     internal interface IGraphNodeStore
     {
@@ -25,15 +21,13 @@ namespace AECC.Query
     }
 
     /// <summary>
-    /// Реализация поверх DefaultEcs.World. ЧЕСТНАЯ ГРАНИЦА КОНКУРЕНТНОСТИ (закрывает №18):
-    /// DefaultEcs не потокобезопасен ни для Set, ни для Set-против-чтения — прежде это
-    /// прикрывал МИРОВОЙ _graphEngineLock менеджера, сериализовавший в том числе весь Search.
-    /// Теперь лок — ВНУТРИ границы и держится только на время Set/Get (микросекунды);
-    /// пересечение битмапов и материализация результата идут БЕЗ него (метрики — MVCC).
+    /// Реализация поверх DefaultEcs.World. DefaultEcs не потокобезопасен ни для Set, ни для
+    /// Set-против-чтения, поэтому доступ к _world/_nodes защищён локом, который держится
+    /// только на время Set/Get (микросекунды); пересечение битмапов и материализация
+    /// результата поиска идут без него (метрики — MVCC).
     ///
-    /// ДЕФЕКТ 6.8 ЗАКРЫТ: узлы создаются ЛЕНИВО при первом касании (бывший конструктор
-    /// жадно создавал maxGraphNodes = 1 000 000 Entity на старте каждого мира независимо
-    /// от населённости).
+    /// Узлы создаются лениво при первом касании (SetNeighbors/GetNeighbors), а не заранее
+    /// для всего диапазона возможных id.
     /// </summary>
     internal sealed class DefaultEcsGraphNodeStore : IGraphNodeStore
     {
@@ -48,7 +42,7 @@ namespace AECC.Query
                 Entity node;
                 if (!_nodes.TryGetValue(nodeId, out node))
                 {
-                    node = _world.CreateEntity(); // лениво (6.8)
+                    node = _world.CreateEntity();
                     _nodes[nodeId] = node;
                 }
                 node.Set(new AdjacencyList { Neighbors = neighborIds });

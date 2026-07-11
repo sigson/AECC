@@ -19,10 +19,11 @@ namespace AECC.Collections
         public class LockedValue
         {
             public TValue Value;
-            // Поле lockValue удалено - элементы "в покое" больше не удерживают тяжелые блокировки.
+            // Элементы "в покое" не держат собственный RWLock - блокировки выдаются
+            // из пула только на время активной операции над ключом (см. Key-Level Lock Manager ниже).
         }
 
-        // --- НОВЫЙ БЛОК: Key-Level Lock Manager ---
+        // --- Key-Level Lock Manager ---
         public class KeyLockInfo
         {
             public int RefCount;
@@ -113,7 +114,7 @@ namespace AECC.Collections
                 }
             }
         }
-        // --- КОНЕЦ БЛОКА Key-Level Lock Manager ---
+        // --- End Key-Level Lock Manager ---
 
 
         private LockedDictionaryPooled<TKey, bool> KeysHoldingStorage = null;

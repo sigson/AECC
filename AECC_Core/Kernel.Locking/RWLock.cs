@@ -150,8 +150,7 @@ namespace AECC.Extensions.ThreadingSync
             }
         }
 
-        /// <summary>Переходный конструктор: режим и ThreadsMode из KernelRuntime в момент создания
-        /// (исходный код и так читал флаги только в конструкторе — семантика идентична).</summary>
+        /// <summary>Uses the concurrency mode and ThreadsMode currently configured on KernelRuntime.</summary>
         public RWLock() : this(KernelRuntime.DefaultMode, KernelRuntime.ThreadsMode)
         {
         }
@@ -171,7 +170,6 @@ namespace AECC.Extensions.ThreadingSync
                 else
                 {
 #if NET || NETSTANDARD2_0_OR_GREATER || UNITY || GODOT4
-                    //lockobj = new AsyncReaderWriterLockSlim();
 #else
                     LockDiagnostics.Sink.LockingError("AsyncReaderWriterLockSlim not supported, enable Defines.ThreadsMode or Defines.OneThread");
 #endif
@@ -211,20 +209,17 @@ namespace AECC.Extensions.ThreadingSync
                 ThreadId = Environment.CurrentManagedThreadId;
             }
         }
-        // --- КОНЕЦ НОВЫХ ТИПОВ ---
 
-        // --- ИЗМЕНЁННЫЕ ПОЛЯ ---
         /// <summary>
-        /// Атомарный счётчик для порядковых номеров.
+        /// Atomic counter used to assign order numbers to lock entries.
         /// </summary>
         private long _orderCounter;
 
         /// <summary>
-        /// Словарь для отслеживания активных блокировок с сохранением порядка.
-        /// Ключ - экземпляр токена, Значение - информация о блокировке.
+        /// Tracks active locks with their acquisition order.
+        /// Key is the token instance, value is the lock's entry info.
         /// </summary>
         private readonly ConcurrentDictionary<LockToken, LockEntry> _activeLocks;
-        // --- КОНЕЦ ИЗМЕНЁННЫХ ПОЛЕЙ ---
 
         public abstract class LockToken : IDisposable
         {
@@ -238,9 +233,8 @@ namespace AECC.Extensions.ThreadingSync
                 _parent = parent ?? throw new ArgumentNullException(nameof(parent));
             }
 
-            // --- НОВЫЙ ВСПОМОГАТЕЛЬНЫЙ МЕТОД ---
             /// <summary>
-            /// Регистрирует блокировку в словаре с атомарным порядковым номером.
+            /// Registers this lock in the active-locks dictionary with an atomic order number.
             /// </summary>
             protected void RegisterLock(string stackTrace, LockType lockType)
             {
@@ -250,13 +244,12 @@ namespace AECC.Extensions.ThreadingSync
             }
 
             /// <summary>
-            /// Удаляет блокировку из словаря.
+            /// Removes this lock from the active-locks dictionary.
             /// </summary>
             protected void UnregisterLock()
             {
                 _parent._activeLocks.TryRemove(this, out _);
             }
-            // --- КОНЕЦ ВСПОМОГАТЕЛЬНОГО МЕТОДА ---
         }
 
         public class WriteLockToken : LockToken
@@ -289,9 +282,6 @@ namespace AECC.Extensions.ThreadingSync
                     {
                         RegisterLock(stackTrace, LockType.Write);
                         lockobj.EnterWriteLock();
-                        
-                        // --- ИЗМЕНЕНО: используем новый метод ---
-                        
                     }
                     catch (Exception e)
                     {
@@ -312,8 +302,6 @@ namespace AECC.Extensions.ThreadingSync
                     if (this.lockobj.IsWriteLockHeld)
                     {
                         lockobj.ExitWriteLock();
-                        
-                        // --- ИЗМЕНЕНО: используем новый метод ---
                         UnregisterLock();
                     }
                     else if (TokenMockLock)
@@ -364,9 +352,6 @@ namespace AECC.Extensions.ThreadingSync
                     {
                         RegisterLock(stackTrace, LockType.Read);
                         lockobj.EnterReadLock();
-                        
-                        // --- ИЗМЕНЕНО: используем новый метод ---
-                        
                     }
                     catch (Exception e)
                     {
@@ -387,8 +372,6 @@ namespace AECC.Extensions.ThreadingSync
                     if (this.lockobj.IsReadLockHeld)
                     {
                         lockobj.ExitReadLock();
-                        
-                        // --- ИЗМЕНЕНО: используем новый метод ---
                         UnregisterLock();
                     }
                     else if (TokenMockLock)
@@ -452,7 +435,6 @@ namespace AECC.Extensions.ThreadingSync
                 else
                 {
     #if NET || NETSTANDARD2_0_OR_GREATER || UNITY || GODOT4
-                    //lockobj = new AsyncReaderWriterLockSlim();
     #else
                     LockDiagnostics.Sink.LockingError("AsyncReaderWriterLockSlim not supported, enable Defines.ThreadsMode or Defines.OneThread");
     #endif
@@ -462,9 +444,8 @@ namespace AECC.Extensions.ThreadingSync
 
         public void Dispose() => lockobj.Dispose();
 
-        // --- ИЗМЕНЁННЫЙ МЕТОД ---
         /// <summary>
-        /// Возвращает список активных блокировок, отсортированный по порядку получения.
+        /// Returns the active locks ordered by acquisition order.
         /// </summary>
         public IReadOnlyList<LockEntry> GetActiveLocksOrdered()
         {
@@ -474,7 +455,7 @@ namespace AECC.Extensions.ThreadingSync
         }
 
         /// <summary>
-        /// Возвращает словарь активных блокировок (без гарантии порядка).
+        /// Returns the active locks (order not guaranteed).
         /// </summary>
         public IReadOnlyDictionary<LockToken, LockEntry> GetActiveLocks()
         {

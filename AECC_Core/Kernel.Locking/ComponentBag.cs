@@ -25,7 +25,7 @@ namespace AECC.Locking
     /// Node references are stable; callers re-validate State/Key after acquiring, so reuse is safe.
     ///
     /// Cross-mode safety: if a structural mutator's write lock comes back as a dummy because the
-    /// SAME thread already holds a conflicting lock on the SAME cell (the legacy "deadlock escape"),
+    /// SAME thread already holds a conflicting lock on the SAME cell (a "deadlock escape"),
     /// the mutation is REFUSED rather than performed without exclusivity. Set
     /// <see cref="RWCell.ThrowOnOrderViolation"/> = true in tests to surface such call sites.
     /// </summary>
@@ -59,12 +59,12 @@ namespace AECC.Locking
         private int _inflight;
         private readonly object _freezeGate = new object();
 
-        // Режим конкурентности (ТЗ 4.1.1): фиксируется при конструировании.
+        // Concurrency mode is fixed at construction time.
         private readonly ConcurrencyMode _mode;
         private bool SingleThread { get { return _mode == ConcurrencyMode.SingleThread; } }
         public ConcurrencyMode Mode { get { return _mode; } }
 
-        /// <summary>Переходный конструктор: режим из KernelRuntime.DefaultMode в момент создания.</summary>
+        /// <summary>Uses the concurrency mode currently configured on KernelRuntime.DefaultMode.</summary>
         public ComponentBag()
             : this(KernelRuntime.DefaultMode)
         {
@@ -287,15 +287,14 @@ namespace AECC.Locking
                         c = Find(key);
                         if (c == null)
                         {
-                            // ФИКС ДЕДЛОКА (дефект №16, найден стрессом сетки 9а): раньше здесь
-                            // брался CellLock ПОД lock(_struct) с комментарием "uncontended" —
-                            // ложным: AllocOrReclaim мог вернуть переиспользованную ABSENT-ячейку,
-                            // на которую опоздавший локер СТАРОГО ключа уже входит снаружи
-                            // (проверка Lock==0 и его CAS гонятся). Итог — AB-BA: мы паркуемся на
-                            // ячейке, держа _struct; он, держа ячейку, ждёт _struct в валидации.
-                            // Теперь порядок ЕДИНЫЙ для всех путей Bag: cell-lock -> _struct.
-                            // Ячейка инициализируется без её лока; захват — общей веткой ниже,
-                            // с ревалидацией (перехват ячейки решается циклом, как везде).
+                            // Lock ordering must be cell-lock -> _struct everywhere in this class:
+                            // AllocOrReclaim can return a reused ABSENT cell that a late locker of the
+                            // OLD key is still entering from outside this lock. Taking the cell lock
+                            // while holding _struct would risk an AB-BA deadlock (parking on the cell
+                            // while holding _struct vs. the other thread holding the cell and waiting
+                            // on _struct to validate). So the cell is initialized here without taking
+                            // its lock; the lock is acquired by the shared branch below, which
+                            // revalidates (a cell stolen for another key is handled by the retry loop).
                             c = AllocOrReclaim();
                             c.Key = key;
                             c.Value = null;
@@ -415,10 +414,10 @@ namespace AECC.Locking
                         c = Find(key);
                         if (c == null)
                         {
-                            // ФИКС ДЕДЛОКА (дефект №16, второй сайт): CellLock под _struct убран
-                            // (см. Hold). Placeholder инициализируется как ABSENT — значение
-                            // становится видимым (PRESENT) только ПОД write-локом общей ветки,
-                            // так что T9-инвариант «коллбэк до видимости» сохранён дословно.
+                            // Same lock-ordering rule as Hold: the cell lock is not taken under
+                            // _struct. The placeholder is initialized ABSENT — the value only becomes
+                            // visible (PRESENT) under the write lock in the shared branch below, so the
+                            // "callback before visibility" invariant holds.
                             c = AllocOrReclaim();
                             c.Key = key; c.Value = null;
                             c.State = ABSENT;
@@ -474,13 +473,11 @@ namespace AECC.Locking
 
         public bool ExecuteOnAddOrChangeLocked(int key, TValue value, Action<int, TValue> onAdd, Action<int, TValue, TValue> onChange)
         {
-            // ПАРИТЕТ с LockedDictionarySlim.ExecuteOnAddOrChangeLocked: колбэк (слушатель
-            // store — обновление сериализационных зеркал + query-индекса) держится ПОД
-            // write-локом ячейки (см. там же: "held across the callback in MT"). Прежняя
-            // реализация делегировала в AddOrChange (лок освобождался ВНУТРИ) и звала колбэк
-            // ПОСЛЕ релиза — это вынесло бы слушателя из-под лока (регрессия видимости).
-            // Структура — как в ExecuteOnAddLocked: placeholder ABSENT под _struct, захват
-            // ячейки СНАРУЖИ _struct, ревалидация, публикация значения + колбэк под локом.
+            // Mirrors LockedDictionarySlim.ExecuteOnAddOrChangeLocked: the callback (store listener
+            // updating serialization mirrors + the query index) must run held UNDER the cell's write
+            // lock, not after it's released, so listeners never observe the change unlocked.
+            // Structure mirrors ExecuteOnAddLocked: placeholder ABSENT under _struct, cell lock taken
+            // OUTSIDE _struct, revalidation, then value publish + callback under the lock.
             using (Mutation())
             {
                 if (_lockdown) return false;

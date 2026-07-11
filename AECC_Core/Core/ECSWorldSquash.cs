@@ -101,7 +101,7 @@ namespace AECC.Core
                 sourceWorld.entityManager.ActivateSquashRedirect(targetWorld.entityManager);
             }
 
-            // Фаза регистрации (только sync — async-ветка удалена)
+            // Фаза регистрации (только sync)
             foreach (var (entity, wasAsync) in entitiesToRegister)
             {
                 targetWorld.entityManager.AddNewEntityReaction(entity);

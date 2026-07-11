@@ -7,17 +7,12 @@ using AECC.Collections;
 using AECC.Core.Logging;
 using AECC.Extensions;
 
-//namespace AECC.Extensions
-//{
 public class Collections
 {
     public static readonly object[] EmptyArray = new object[0];
 
     public static List<T> AsList<T>(params T[] values) =>
         new List<T>(values);
-
-    //public static IList<T> EmptyList<T>() =>
-    //    EmptyList<T>.Instance;
 
     public static void ForEach<T>(IEnumerable<T> coll, Action<T> action)
     {
@@ -104,10 +99,6 @@ public class Collections
         enumerator2.MoveNext();
         return enumerator2.Current;
     }
-
-    //public static IList<T> SingletonList<T>(T value) =>
-    //    new SingletonList<T>(value);
-
 
     public struct Enumerator<T>
     {
@@ -324,7 +315,6 @@ public static class EnumerableExtension
         // Извлекаем элементы, пока очередь не станет пустой
         while (queue.TryDequeue(out _))
         {
-            // Ничего не делаем, просто выбрасываем элемент
         }
     }
 
@@ -369,8 +359,6 @@ public static class EnumerableExtension
 
         foreach (var item in source)
         {
-            // Безопасное приведение: если item можно привести к TResult, 
-            // он помещается в переменную result и возвращается
             if (item is TResult result)
             {
                 yield return result;
@@ -627,4 +615,3 @@ public class ArrayTraverse
         return false;
     }
 }
-//}

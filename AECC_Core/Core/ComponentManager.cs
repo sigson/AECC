@@ -20,7 +20,6 @@ namespace AECC.Core
         public ECSComponentManager(ECSWorld world)
         {
             this.world = world;
-            // Профиль вместо WorldType-ифа (идея 1.15); прежний else-if исчерпывал все три вида.
             if (this.world.Profile.ClientComponentGroups)
                 GlobalProgramComponentGroup = new ClientComponentGroup();
             else

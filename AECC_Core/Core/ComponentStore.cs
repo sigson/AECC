@@ -6,22 +6,18 @@ using AECC.Locking;
 namespace AECC.Core
 {
     /// <summary>
-    /// Слушатель событий хранилища компонентов (ТЗ 4.5.1). Дисциплина «событий»:
-    /// это НЕ .NET-event и не очередь — синхронный прямой вызов интерфейса,
-    /// ЗАФИКСИРОВАННОГО ПРИ КОНСТРУИРОВАНИИ store; параметры вместо args-объектов;
-    /// без multicast-делегатов/замыканий/LINQ. Асинхронность/очередь запрещены.
+    /// Слушатель событий хранилища компонентов. Дисциплина «событий»: это НЕ .NET-event
+    /// и не очередь — синхронный прямой вызов интерфейса, зафиксированного при
+    /// конструировании store; параметры вместо args-объектов; без
+    /// multicast-делегатов/замыканий/LINQ. Асинхронность/очередь запрещены.
     ///
-    /// Порядок дословный: «сначала мутация словаря завершена, потом вызов» — методы
-    /// вызываются ПОД write-локом ячейки, сразу после того как значение легло в слот
-    /// (ровно та точка, где раньше исполнялись Add/Change/RemoveComponentProcess).
-    /// Реакции уровня хранилища (AddedReaction и т.п.) — по-прежнему ВНЕ структурного
-    /// лока, их запускает оркестратор после возврата операции («сначала факт, потом
-    /// событие», идея 1.1).
+    /// Порядок вызова: «сначала мутация словаря завершена, потом вызов» — методы
+    /// вызываются ПОД write-локом ячейки, сразу после того как значение легло в слот.
+    /// Реакции уровня хранилища (AddedReaction и т.п.) — ВНЕ структурного лока, их
+    /// запускает оркестратор после возврата операции («сначала факт, потом событие»).
     ///
-    /// ПЕРЕХОДНОЕ (до фазы 4): слушатель сейчас — EntityComponentStorage (оркестратор
-    /// сериализационных зеркал); контекстные параметры restoringMode/silent/restoringOwner
-    /// обслуживают зеркала и уйдут из интерфейса вместе с ними в EntitySerializationState
-    /// (ТЗ 4.7). Целевой слушатель — мир (один).
+    /// Слушатель сейчас — EntityComponentStorage (оркестратор сериализационных зеркал);
+    /// контекстные параметры restoringMode/silent/restoringOwner обслуживают зеркала.
     /// </summary>
     public interface IComponentStoreListener
     {
@@ -32,39 +28,32 @@ namespace AECC.Core
         /// Полный процесс изменения: владение/Unregistered/dirty-set.</summary>
         void ComponentChanged(long typeUid, ECSComponent component, ECSComponent oldComponent, bool silent, ECSEntity restoringOwner, bool restoringMode);
 
-        /// <summary>Компонент помечен изменённым БЕЗ замены значения (бывш. MarkComponentChanged):
-        /// только dirty-set. Под write-локом ячейки. Сливается с ComponentChanged в фазе 4,
-        /// когда dirty-set уедет в EntitySerializationState.</summary>
+        /// <summary>Компонент помечен изменённым без замены значения: только dirty-set.
+        /// Вызывается под write-локом ячейки.</summary>
         void ComponentMarkedChanged(long typeUid, ECSComponent component, bool serializationSilent);
 
-        /// <summary>Removal-событие. Под write-локом ячейки; ФАКТИЧЕСКИЙ порядок примитива
-        /// (и бывшего RemoveComponentProcess внутри ExecuteOnRemoveLocked) — «коллбэк, ЗАТЕМ
-        /// изъятие из словаря»: значение ещё видимо читателям без лока в момент вызова,
-        /// но write-лок гарантирует, что локующие читатели его не возьмут. Характеризовано
-        /// сеткой (store-тест дисциплины).</summary>
+        /// <summary>Removal-событие. Вызывается под write-локом ячейки; порядок примитива
+        /// (внутри ExecuteOnRemoveLocked) — «коллбэк, ЗАТЕМ изъятие из словаря»: значение
+        /// ещё видимо читателям без лока в момент вызова, но write-лок гарантирует, что
+        /// локующие читатели его не возьмут.</summary>
         void ComponentRemoved(long typeUid, ECSComponent component);
     }
 
     /// <summary>
-    /// Хранилище компонентов сущности (фаза 3, шаг 2; ТЗ 4.5.1): ТОЛЬКО хранение +
-    /// транзакционная матрица + absence-holds. Пер-сущностный словарь: ключ — стабильный
-    /// type-uid (long, == component.GetId() == type.TypeId()), HoldKeys ВКЛЮЧЁН —
-    /// холды отсутствия (HoldComponentAddition / ExecuteOnNotHasComponent) — часть
-    /// контрактной машинерии (идея 1.13).
+    /// Хранилище компонентов сущности: ТОЛЬКО хранение + транзакционная матрица +
+    /// absence-holds. Пер-сущностный словарь: ключ — стабильный type-uid (long,
+    /// == component.GetId() == type.TypeId()), HoldKeys ВКЛЮЧЁН — холды отсутствия
+    /// (HoldComponentAddition / ExecuteOnNotHasComponent) — часть контрактной машинерии.
     ///
     /// Store не знает ни сущности, ни мира, ни сериализации, ни логгера: все side-effects —
-    /// у слушателя. Живёт в AECC.Core переходно; переезд в AECC.Runtime — в конце фазы 3.
+    /// у слушателя.
     /// </summary>
     public sealed class ComponentStore : IEnumerable<KeyValuePair<long, ECSComponent>>
     {
-        // ФАЗА ОПТИМИЗАЦИИ ПАМЯТИ: пер-сущностное хранилище переведено с
-        // LockedDictionarySlim (ConcurrentDictionary + отдельный вложенный _keysHolding для
-        // absence-holds + неограниченно растущие ячейки при preserveLockingKeys) на
-        // ComponentBag (компактный массив Cell[], лок инлайн как long в ячейке, absence-holds
-        // в том же слоте в состоянии ABSENT — БЕЗ вложенного словаря, слоты переиспользуются).
-        // На 100k сущностей это убирает ~3 ConcurrentDictionary на сущность (Tables/Node) и
-        // весь Cell<long,bool> _keysHolding-кластер. Ключ type-uid — всегда int-диапазон
-        // ([TypeUid(int)]), поэтому (int)typeUid — точная конверсия.
+        // Пер-сущностное хранилище — ComponentBag (компактный массив Cell[], лок инлайн
+        // как long в ячейке, absence-holds — в том же слоте в состоянии ABSENT, без
+        // вложенного словаря, слоты переиспользуются). Ключ type-uid — всегда в
+        // int-диапазоне ([TypeUid(int)]), поэтому (int)typeUid — точная конверсия.
         private readonly ComponentBag<ECSComponent> _slots;
         private readonly IComponentStoreListener _listener;
 
@@ -77,8 +66,7 @@ namespace AECC.Core
 
         // ───────── транзакционная матрица (с нотификацией слушателя) ─────────
 
-        /// <summary>Добавление (дословно прежняя двухфазная форма AddComponentImmediately:
-        /// внешний ContainsKey-гейт + ExecuteOnAddLocked).</summary>
+        /// <summary>Добавление: внешний ContainsKey-гейт + ExecuteOnAddLocked (двухфазная форма).</summary>
         public bool Add(long typeUid, ECSComponent component, bool restoringMode)
         {
             bool added = false;
@@ -94,9 +82,9 @@ namespace AECC.Core
             return added;
         }
 
-        /// <summary>Add-или-Change одним транзактом (бывш. AddOrChangeComponentImmediately).
-        /// changedBranch=true, если исполнилась change-ветка (исход dirty решает слушатель по silent).
-        /// restoringOwner передаёт вызывающий (store сущности не знает): в restoring-режиме — сущность-владелец.</summary>
+        /// <summary>Add-или-Change одним транзактом. changedBranch=true, если исполнилась
+        /// change-ветка (исход dirty решает слушатель по silent). restoringOwner передаёт
+        /// вызывающий (store сущности не знает): в restoring-режиме — сущность-владелец.</summary>
         public void AddOrChange(long typeUid, ECSComponent component, bool restoringMode, bool silent, ECSEntity restoringOwner, out bool added, out bool changedBranch)
         {
             bool a = false, c = false;
@@ -113,7 +101,7 @@ namespace AECC.Core
             changedBranch = c;
         }
 
-        /// <summary>Замена значения (бывш. ChangeComponent).</summary>
+        /// <summary>Замена значения.</summary>
         public bool Change(long typeUid, ECSComponent component, bool silent, ECSEntity restoringOwner)
         {
             bool changed = false;
@@ -125,7 +113,7 @@ namespace AECC.Core
             return changed;
         }
 
-        /// <summary>Пометка изменённым без замены значения (бывш. MarkComponentChanged).</summary>
+        /// <summary>Пометка изменённым без замены значения.</summary>
         public bool MarkChanged(long typeUid, ECSComponent component, bool serializationSilent)
         {
             bool touched = false;
@@ -137,7 +125,7 @@ namespace AECC.Core
             return touched;
         }
 
-        /// <summary>Изъятие (бывш. Remove*Immediately ядро).</summary>
+        /// <summary>Изъятие компонента из слота.</summary>
         public bool Remove(long typeUid, out ECSComponent component)
         {
             bool removed = false;
@@ -149,20 +137,19 @@ namespace AECC.Core
             return removed;
         }
 
-        // ───────── absence-holds (контрактная машинерия, идея 1.13) ─────────
+        // ───────── absence-holds (контрактная машинерия) ─────────
 
         public bool ExecuteOnAbsent(long typeUid, Action action) { return _slots.ExecuteHoldRead((int)typeUid, action); }
-        /// <summary>Прежний LockedDictionarySlim.HoldKey(key, out, holdMode) ИГНОРИРОВАЛ holdMode
-        /// и всегда брал SHARED-hold отсутствия — поведение сохранено дословно (exclusive:false).</summary>
+        /// <summary>Holds по отсутствию всегда берут SHARED-lock (holdMode игнорируется,
+        /// exclusive:false всегда).</summary>
         public bool HoldAbsence(long typeUid, out RWToken token, bool holdMode) { return _slots.Hold((int)typeUid, false, out token); }
 
         // ───────── проекции словаря (хранение, локи, lockdown/freeze) ─────────
-        // Имена и семантика — дословно как раньше; ComponentBag покрывает ту же
-        // транзакционную матрицу через per-cell RWCell.
+        // ComponentBag покрывает ту же транзакционную матрицу через per-cell RWCell.
 
         public bool ContainsKey(long typeUid) { return _slots.ContainsKey((int)typeUid); }
         public bool TryGetValue(long typeUid, out ECSComponent component) { return _slots.TryGetValue((int)typeUid, out component); }
-        /// <summary>Индексаторная семантика прежнего components[key]: KeyNotFoundException при отсутствии.</summary>
+        /// <summary>Индексаторная семантика components[key]: KeyNotFoundException при отсутствии.</summary>
         public ECSComponent GetOrThrow(long typeUid)
         {
             ECSComponent component;

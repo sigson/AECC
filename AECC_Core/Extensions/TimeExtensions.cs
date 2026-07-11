@@ -126,7 +126,6 @@ namespace AECC.Extensions
                 if(base.timerData.AutoReset)
                     this.Interval = this.baseInterval; 
                 TimerStart = TimerDateTime.DateTimeNowTicks; TimerPaused = 0;});
-            //base.AutoReset = true;
             this.timerData.Disposed += new EventHandler(this.OnDisposeTimer);
         }
 
@@ -147,7 +146,6 @@ namespace AECC.Extensions
                 TimerStart = TimerDateTime.DateTimeNowTicks; TimerPaused = 0; });
             Interval = oldTimer.Interval;
 			inited = true;
-            //base.AutoReset = true;
             this.timerData.Disposed += new EventHandler(this.OnDisposeTimer);
         }
 
@@ -307,7 +305,6 @@ namespace AECC.Extensions
                     {
                         lock (_timers)
                         {
-                            //var timersToProcess = _timers.ToList();
                             foreach (var timer in _timers)
                             {
                                 if (timer.IsEnabled && !timer.IsPaused)
@@ -430,7 +427,6 @@ namespace AECC.Extensions
 
         public TimerCompat()
         {
-            //var initTimer = Manager.ToString();
         }
 
         public TimerCompat(TimerInstance timerInstance)

@@ -8,46 +8,38 @@ using AECC.Extensions.ThreadingSync;
 namespace AECC.Core.Serialization
 {
     /// <summary>
-    /// Пер-объектная сериализационная ТЕНЬ (фаза 4, шаг 3; ТЗ 4.4/4.7, стратегия 3.4/3.7).
-    /// Владеет трёхфазным автоматом инвалидации NoData → Changed → Freezed (идея 1.6 —
-    /// дословно), счётчиком retry-десериализации и всей логикой
-    /// Serialization/Deserialization/AfterDeserialization, выселенной из IECSObject.
-    /// В модели остались только пользовательские хуки EnterToSerializationImpl /
+    /// Пер-объектная сериализационная ТЕНЬ. Владеет трёхфазным автоматом инвалидации
+    /// NoData → Changed → Freezed, счётчиком retry-десериализации и всей логикой
+    /// Serialization/Deserialization/AfterDeserialization для IECSObject.
+    /// В модели остаются только пользовательские хуки EnterToSerializationImpl /
     /// AfterSerializationImpl / AfterDeserializationImpl и SerialLocker (контракт с
-    /// прикладным кодом, ТЗ 4.4).
+    /// прикладным кодом).
     ///
-    /// Хранение — OPAQUE-СЛОТ на объекте (IECSObject.serializationShadow типа object:
-    /// модель хранит, не интерпретирует) — ДЕФОЛТ по ТЗ/анти-бомбе 7.4: внешняя таблица
-    /// instanceId → shadow дала бы лукап + контенцию на каждом касании ChangesState.
-    /// Слот [NonSerialized]: у свежедесериализованного инстанса тень создаётся заново —
-    /// это ДОСЛОВНО прежняя семантика сброса ([NonSerialized] ChangesState → NoData
-    /// (enum-default 0), deserializeErrorCount → 0).
+    /// Хранение — opaque-слот на объекте (IECSObject.serializationShadow типа object:
+    /// модель хранит, не интерпретирует). Внешняя таблица instanceId → shadow дала бы
+    /// лукап + контенцию на каждом касании ChangesState, поэтому используется слот.
+    /// Слот [NonSerialized]: у свежедесериализованного инстанса тень создаётся заново
+    /// (ChangesState → NoData (enum-default 0), DeserializeErrorCount → 0).
     ///
-    /// ГРАНИЦА ДАННЫХ (уточнение к передаточному отчёту, сверено с ТЗ 4.4/стратегией 3.4):
-    /// HasChildChanges и childECSObjectsId — сериализуемые WIRE-поля протокола (получатель
-    /// читает их из пришедшего инстанса; зеркало — половина «двойного представления»
-    /// идеи 1.4, ориентир Model). Физически они остаются полями IECSObject как инертные
-    /// ДАННЫЕ; вся их ИНТЕРПРЕТАЦИЯ — только здесь. Перенос их в [NonSerialized]-слот
-    /// сломал бы восстановление дерева детей у любого field-based адаптера — эскалировано
-    /// в журнале (§11.4).
+    /// ГРАНИЦА ДАННЫХ: HasChildChanges и childECSObjectsId — сериализуемые WIRE-поля
+    /// протокола (получатель читает их из пришедшего инстанса; зеркало — половина
+    /// «двойного представления»). Физически они остаются полями IECSObject как инертные
+    /// данные; вся их интерпретация — только здесь. Перенос их в [NonSerialized]-слот
+    /// сломал бы восстановление дерева детей у любого field-based адаптера.
     ///
-    /// Транзитно (до физического выноса сборок, шаг 4.4): модель зовёт тень напрямую
-    /// (прецедент шага 1 — EntitySerializationState); при выносе точка связи модели
-    /// сводится к MarkChanged() за интерфейсом Abstractions («типизированный слот через
-    /// интерфейс» — санкционировано стратегией 3.7), остальное дёргает только Serialization.
+    /// Модель зовёт тень напрямую (см. также EntitySerializationState).
     /// </summary>
     public sealed class SerializationShadow
     {
-        // ───── автомат инвалидации (идея 1.6; бывший [NonSerialized] IECSObject.ChangesState) ─────
+        // ───── автомат инвалидации ─────
         public IECSObject.IECSObjectSerializedStateMode ChangesState = IECSObject.IECSObjectSerializedStateMode.NoData;
 
-        // ───── retry-счётчик событийной десериализации (бывший [NonSerialized] deserializeErrorCount) ─────
+        // ───── retry-счётчик событийной десериализации ─────
         public int DeserializeErrorCount = 0;
 
         /// <summary>
         /// Тень из opaque-слота объекта (создаёт при первом обращении). Горячие касания —
-        /// одно чтение поля + as-cast; аллокация — однократно на инстанс (мандат 7.4:
-        /// слот вместо таблицы).
+        /// одно чтение поля + as-cast; аллокация — однократно на инстанс.
         /// </summary>
         public static SerializationShadow Of(IECSObject obj)
         {
@@ -60,16 +52,16 @@ namespace AECC.Core.Serialization
             return shadow;
         }
 
-        /// <summary>Мутация модели (дети/владелец) инвалидирует снапшот (идея 1.6).</summary>
+        /// <summary>Мутация модели (дети/владелец) инвалидирует снапшот.</summary>
         public void MarkChanged()
         {
             ChangesState = IECSObject.IECSObjectSerializedStateMode.Changed;
         }
 
         /// <summary>
-        /// Снапшот-проход (бывший IECSObject.SerializationProcess — тело дословно):
-        /// Freezed потребляется в NoData (+сброс флага); Changed материализует зеркало
-        /// детей лениво в момент сериализации и замерзает с HasChildChanges = true.
+        /// Снапшот-проход: Freezed потребляется в NoData (+сброс флага); Changed
+        /// материализует зеркало детей лениво в момент сериализации и замерзает
+        /// с HasChildChanges = true.
         /// </summary>
         public void SnapshotPass(IECSObject owner)
         {
@@ -80,7 +72,7 @@ namespace AECC.Core.Serialization
             }
             if (ChangesState == IECSObject.IECSObjectSerializedStateMode.Changed)
             {
-                // Ленивое зеркало: материализуем ровно здесь — в точке заполнения.
+                // Ленивое зеркало: материализуем именно здесь — в точке заполнения.
                 if (owner.childECSObjectsId == null)
                     owner.childECSObjectsId = new Dictionary<long, IECSObjectPathContainer>();
                 owner.childECSObjectsId.Clear();
@@ -94,15 +86,15 @@ namespace AECC.Core.Serialization
         }
 
         /// <summary>
-        /// Восстановление дерева из зеркала (бывший IECSObject.DeserializationProcess —
-        /// тело дословно, включая порядок «сначала добор, потом чистка лишних»).
+        /// Восстановление дерева из зеркала. Порядок фиксирован: сначала добор
+        /// недостающих детей, затем чистка лишних.
         /// </summary>
         public bool RestorePass(IECSObject owner, bool retryGetECSObjects = false)
         {
             var newchildECSObjects = new DictionaryWrapper<long, IECSObject>();
 
-            // Ленивое зеркало: null эквивалентно пустому словарю (поведение прежнее —
-            // нижний проход по ChildrenForSerialization всё равно вычистит лишних детей).
+            // Ленивое зеркало: null эквивалентно пустому словарю — нижний проход по
+            // ChildrenForSerialization всё равно вычистит лишних детей.
             if (retryGetECSObjects && owner.childECSObjectsId != null)
             {
                 foreach (var entry in owner.childECSObjectsId)
@@ -143,14 +135,13 @@ namespace AECC.Core.Serialization
         }
 
         /// <summary>
-        /// Пост-десериализация (бывший IECSObject.AfterDeserialization — тело дословно):
-        /// профильная ветка (идеи 1.8/1.15), событийный retry через
-        /// PendingDeserializationRegistry с register-then-recheck, cap 30 + dead-letter-лог.
+        /// Пост-десериализация: профильная ветка с событийным retry через
+        /// PendingDeserializationRegistry (register-then-recheck), cap 30 + dead-letter-лог.
         /// Порядок локов Drain vs SerialLocker — инвариант реестра, не менять.
         /// </summary>
         public void AfterRestore(IECSObject owner)
         {
-            if (!owner.ECSWorldOwner.Profile.ClientRetryOnMissingRefs) // профиль вместо WorldType-ифа (идеи 1.8/1.15)
+            if (!owner.ECSWorldOwner.Profile.ClientRetryOnMissingRefs)
             {
                 using (new SharedLock.Scope(owner.SerialLocker))
                 {

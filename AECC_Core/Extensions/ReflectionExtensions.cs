@@ -16,12 +16,9 @@ namespace AECC.Extensions
             var allAssembly = AppDomain.CurrentDomain.GetAssemblies();
             foreach (var a in allAssembly)
                 foreach (var t in a.GetTypes())
-                    //if (t.IsAssignableTo(parent)) yield return t;
                     if (t.IsSubclassOf(parent))
                     {
                         yield return t;
-                        //foreach(var xt in GetAllSubclassOf(t))
-                        //    yield return xt;
                     }
         }
     }
@@ -155,7 +152,6 @@ namespace AECC.Extensions
         {
             if(Defines.AOTMode)
             {
-                //DeepCloneExtension.DeepCopyByExpressionTree
                 return ObjectExtensions.Copy(Object);
             }
             else

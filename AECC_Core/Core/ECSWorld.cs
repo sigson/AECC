@@ -17,12 +17,12 @@ namespace AECC.Core
             }
             return SingletonFallback;
         };
-        // ФАЗА 4, вынос сборок: фабрика дефолтного адаптера уехала в
-        // AECC.Serialization.SerializationBootstrap (мир не знает типов сериализации).
+        // Фабрика дефолтного адаптера сериализации живёт в
+        // AECC.Serialization.SerializationBootstrap — мир не знает типов сериализации.
 
-        // ФАЗА 3, шаг 5 (ТЗ 4.5.5): источник истины — инстансный WorldRegistry. Статические
-        // Func остаются переходными фасадами: их ДЕФОЛТЫ ходят в реестр, а сама точка
-        // переопределения GetWorld сохраняется (интеграции и тесты подменяют её).
+        // Источник истины — инстансный WorldRegistry. Статический Func — фасад над ним:
+        // дефолт ходит в реестр, а сама точка переопределения GetWorld сохраняется
+        // (интеграции и тесты подменяют её).
         public static Func<long, ECSWorld> GetWorld = (long instance) =>
         {
             ECSWorld w;
@@ -47,9 +47,9 @@ namespace AECC.Core
         public ECSEntityManager entityManager;
         public ECSComponentManager componentManager;
 
-        /// <summary>ФАЗА 5 (ТЗ 4.6, breaking): точка поиска — world.Query.Search(scope, with,
-        /// without). Реализация — AECC.Query.EntityQueryIndex; монтаж — QueryBootstrap.Attach
-        /// (заполняет этот слот и entityManager.QueryIndex). null = мир без поиска.</summary>
+        /// <summary>Точка поиска — world.Query.Search(scope, with, without). Реализация —
+        /// AECC.Query.EntityQueryIndex; монтаж — QueryBootstrap.Attach (заполняет этот слот
+        /// и entityManager.QueryIndex). null = мир без поиска.</summary>
         public IWorldQueryIndex Query;
         public bool Initialized = false;
         public enum WorldTypeEnum
@@ -59,23 +59,22 @@ namespace AECC.Core
             Offline
         }
         public WorldTypeEnum WorldType = WorldTypeEnum.Offline;
-        // ФАЗА 4, вынос сборок (гейт «Model/Core без ссылки на Serialization»): поля
-        // ретипизированы в object — мир ХРАНИТ сериализатор/адаптер, не интерпретирует.
-        // Монтаж — AECC.Serialization.SerializationBootstrap.Attach(world, adapter):
-        // он создаёт EntityNetSerializer, зовёт InitSerialize и заполняет оба слота.
-        // Типизированный доступ — только со стороны Serialization/приложения (breaking по ТЗ).
+        // Поля object-типизированы (гейт «Model/Core без ссылки на Serialization»): мир
+        // ХРАНИТ сериализатор/адаптер, не интерпретирует их. Монтаж —
+        // AECC.Serialization.SerializationBootstrap.Attach(world, adapter): он создаёт
+        // EntityNetSerializer, зовёт InitSerialize и заполняет оба слота. Типизированный
+        // доступ — только со стороны Serialization/приложения.
         public object EntityWorldSerializer;
         public object serializationAdapter = null;
 
-        /// <summary>Планировщик мира (ТЗ 4.3): инжектируемая абстракция над TaskEx/TimerCompat.
+        /// <summary>Планировщик мира: инжектируемая абстракция над TaskEx/TimerCompat.
         /// Подмена на детерминированный — до Configure/Start.</summary>
         public AECC.Abstractions.IScheduler Scheduler = DefaultScheduler.Instance;
 
         private WorldProfile _profile;
 
-        /// <summary>Профиль мира (ТЗ 4.5.6): флаги вычислены при создании (первое обращение /
-        /// Configure) — последующие смены WorldType на профиль НЕ влияют (санкционированная
-        /// семантика «флаги при создании»).</summary>
+        /// <summary>Профиль мира: флаги вычислены при создании (первое обращение /
+        /// Configure) — последующие смены WorldType на профиль не влияют.</summary>
         public WorldProfile Profile
         {
             get
@@ -89,20 +88,20 @@ namespace AECC.Core
         private IDisposable timeDependContractsTimer;
         private bool _disposed;
 
-        // ─────── Явный lifecycle мира (ТЗ 4.5.7): Create → Configure → Start → [Squash] → Dispose ───────
+        // ─────── Явный lifecycle мира: Create → Configure → Start → [Squash] → Dispose ───────
 
         /// <summary>Конфигурация мира: профиль, адаптер сериализации, реестр. Регистрирует мир
         /// в реестре и поднимает менеджеры. Таймеры НЕ стартуют — это Start().</summary>
         public void Configure(WorldProfile profile = null, object adapter = null,
                               WorldRegistry registry = null, Func<Type, bool> staticContractFiltering = null)
         {
-            AECC.Core.Logging.KernelBootstrap.EnsureInstalled(); // диагностика лок-ядра (ТЗ 4.1.2)
+            AECC.Core.Logging.KernelBootstrap.EnsureInstalled();
             SingletonFallback = this;
             _profile = profile ?? new WorldProfile(WorldType);
             _registry = registry ?? WorldRegistry.Default;
             _registry.Register(this);
-            // Монтаж сериализации — SerializationBootstrap.Attach (вынос сборок, ТЗ 4.7);
-            // adapter-параметр Configure сохранён слотом для прежнего порядка вызова.
+            // Монтаж сериализации — SerializationBootstrap.Attach; adapter-параметр
+            // Configure сохранён слотом для совместимости порядка вызова.
             if (adapter != null) serializationAdapter = adapter;
             entityManager = new ECSEntityManager(this);
             componentManager = new ECSComponentManager(this);
@@ -110,8 +109,8 @@ namespace AECC.Core
             contractsManager.InitializeSystems();
         }
 
-        /// <summary>Старт активностей мира: таймер time-depend контрактов через IScheduler
-        /// (бывший побочный эффект InitWorldScope; интервал — из профиля, прежний дефолт 5 мс).</summary>
+        /// <summary>Старт активностей мира: таймер time-depend контрактов через IScheduler,
+        /// интервал берётся из профиля.</summary>
         public void Start()
         {
             if (timeDependContractsTimer != null) return;
@@ -121,7 +120,7 @@ namespace AECC.Core
         }
 
         /// <summary>Остановка активностей и уход из реестра. Squash-редиректы мира остаются
-        /// активными (мёртвый мир — прозрачный прокси, идея 1.9).</summary>
+        /// активными (мёртвый мир — прозрачный прокси).</summary>
         public void Dispose()
         {
             if (_disposed) return;
@@ -130,11 +129,10 @@ namespace AECC.Core
             timeDependContractsTimer = null;
             if (t != null) t.Dispose();
             if (_registry != null) _registry.Unregister(this.instanceId);
-            SharedFieldTable.DropWorld(this.instanceId); // ТЗ 4.5.8б: мир умирает со своими данными
+            SharedFieldTable.DropWorld(this.instanceId);
         }
 
-        /// <summary>Переходный фасад прежней инициализации: Configure + Start одним вызовом,
-        /// поведение дословно прежнее.</summary>
+        /// <summary>Фасад: Configure + Start одним вызовом.</summary>
         public void InitWorldScope(Func<Type, bool> staticContractFiltering)
         {
             Configure(staticContractFiltering: staticContractFiltering);

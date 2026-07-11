@@ -21,8 +21,8 @@ namespace AECC.Collections
 
         public ConcurrentHashSet(ICollection<T> collection)
         {
-            // ForEach — расширение из AECC.Core (EnumerableExtension), Kernel его не видит
-            // (0 зависимостей); обычный foreach семантически идентичен.
+            // Plain foreach is used instead of the ForEach extension (AECC.Core.EnumerableExtension)
+            // because Kernel has zero dependency on AECC.Core; behavior is otherwise identical.
             foreach (var x in collection) this.Add(x);
         }
 
@@ -47,7 +47,6 @@ namespace AECC.Collections
 
         public void CopyTo(T[] array, int arrayIndex)
         {
-            // Validate input parameters
             if (array == null)
                 throw new ArgumentNullException(nameof(array));
 
@@ -57,7 +56,6 @@ namespace AECC.Collections
             if (array.Length - arrayIndex < Count)
                 throw new ArgumentException("The array does not have enough space to copy all elements starting at the specified index.");
 
-            // Copy elements to the array
             int index = arrayIndex;
             foreach (T item in this)
             {

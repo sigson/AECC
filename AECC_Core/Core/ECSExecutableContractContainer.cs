@@ -43,7 +43,6 @@ namespace AECC.Core
     public class ECSExecutableContractContainer
     {
         public string ContractId { get; set; }
-        // [NonSerialized] снят: бывшее поле _systemType уехало в Spec (шаг 3 фазы 6)
         public Type SystemType
         {
             get => Spec._systemType;
@@ -68,8 +67,8 @@ namespace AECC.Core
             }
         }
 
-        // ДЕФЕКТ 6.7 (ТЗ 4.8): verbose-простыни по умолчанию ВЫКЛЮЧЕНЫ — диагностика
-        // включается точечно (LoggingLevel = Verbose на контракте).
+        // Verbose-логирование по умолчанию выключено — диагностика включается точечно
+        // (LoggingLevel = Verbose на конкретном контракте).
         /// <summary>
         /// Уровень логгирования для контракта
         /// </summary>
@@ -194,9 +193,6 @@ namespace AECC.Core
             }
         }
 
-        /// <summary>
-        /// Set FALSE if contract is time depend
-        /// </summary>
         public ECSWorld ECSWorldOwner
         {
             get => Runtime._ecsWorldOwner;
@@ -209,9 +205,6 @@ namespace AECC.Core
             }
         }
 
-        /// <summary>
-        /// Set FALSE if contract is time depend
-        /// </summary>
         public bool RemoveAfterExecution
         {
             get => Spec._removeAfterExecution;
@@ -380,14 +373,12 @@ namespace AECC.Core
             }
         }
 
-        // ═══ ФАЗА 6, ШАГ 3 (ТЗ 4.8): разложение Spec/Runtime ═══
-        // ContractSpec — декларативная часть (ЧТО за контракт: условия, presence-sign,
-        // исполняемые тела, флаги режима). ContractRuntime — изменяемое состояние
-        // исполнения (счётчики/фазы) ЗА ОДНИМ ЛОКЕРОМ: ~27 lock-бойлерплейт-свойств
-        // контейнера схлопнуты в однострочные делегации; публичный API контейнера
-        // сохранён дословно (сетка и приклад не тронуты). Семантика прежняя: чтения
-        // без лока, записи под Runtime.Locker (бывший ContractLocker; его публичный
-        // сеттер — подменяемость локера — удалён как бомба, эскалация №11).
+        // Spec/Runtime split: ContractSpec — декларативная часть (ЧТО за контракт: условия,
+        // presence-sign, исполняемые тела, флаги режима). ContractRuntime — изменяемое
+        // состояние исполнения (счётчики/фазы) за одним локером (Runtime.Locker /
+        // ContractLocker). Свойства контейнера — тонкие делегации: чтения без лока,
+        // записи под ContractLocker. Локер не подменяем (нет публичного сеттера) —
+        // это предотвращает рассинхрон между читателями и писателями состояния.
 
         public sealed class ContractSpec
         {
@@ -437,7 +428,7 @@ namespace AECC.Core
         public readonly ContractSpec Spec = new ContractSpec();
         public readonly ContractRuntime Runtime = new ContractRuntime();
 
-        /// <summary>Единый локер состояния (бывший публичный get/set-ContractLocker).</summary>
+        /// <summary>Единый локер состояния контракта.</summary>
         public object ContractLocker { get { return Runtime.Locker; } }
 
         public List<long> NeededEntities
@@ -454,9 +445,9 @@ namespace AECC.Core
             }
         }
 
-        /// <summary>ДЕФЕКТ 6.7: захват стека рождения контракта — ДОРОГОЙ (StackTrace на
-        /// каждый контракт). Захватывается только при включённой диагностике; dead-letter
-        /// без флага печатает подсказку вместо стека.</summary>
+        /// <summary>Захват стека рождения контракта — дорогая операция (StackTrace на
+        /// каждый контракт), поэтому включается только при активной диагностике;
+        /// dead-letter без флага печатает подсказку вместо стека.</summary>
         public static bool CaptureGenerationStackTrace = false;
 
         public ECSExecutableContractContainer()
@@ -611,8 +602,6 @@ namespace AECC.Core
                             {
                                 lockers.ForEach(x => x.Dispose());
                             }
-                            // if(ExecuteContract)
-                            //     ContractExecuted = true;
                             if (!errorState)
                                 return true;
                         }
@@ -632,14 +621,12 @@ namespace AECC.Core
             }
         }
 
-        // ═══ ФАЗА 6, «ЕДИНЫЙ LOCKER-ПУТЬ» (ТЗ 4.8) ═══
-        // Два дублированных метода (GetContractLockersOneThread / GetContractLockers)
-        // слиты в AcquireContractTargets: ядро проверок (presence-sign, условия,
-        // диагностика, дисциплина отката, строгий финал) — ОДНО; режимные точки помечены
-        // [T] (взятие токенов) и [D1]/[D2]/[D3] (исторические семантические расхождения
-        // ST/MT, воспроизведённые дословно за режимным флагом — канонизация одной
-        // семантики = эскалация №10). Прежние сигнатуры — тонкие шимы (сайты вызова
-        // не тронуты). Дрейф путей более невозможен: код один.
+        // GetContractLockersOneThread / GetContractLockers are thin shims over
+        // AcquireContractTargets: a single implementation for the entity-check core
+        // (presence-sign, conditions, diagnostics, rollback discipline, strict finalization).
+        // Mode-specific points are marked [T] (token acquisition) and [D1]/[D2]/[D3]
+        // (single-thread vs multi-thread semantic differences, preserved verbatim
+        // behind the mode flag so ST and MT behavior stays intentionally distinct).
 
         private bool GetContractLockersOneThread(
             List<long> contractEntities,
@@ -678,7 +665,7 @@ namespace AECC.Core
             var localExecutionEntities = new List<ECSEntity>();
             bool globalViolationSeizure = false;
 
-            // Дедуп — общий (фикс №20: MT дедуплицировал всегда, ST выровнен).
+            // Dedup applies to both modes.
             foreach (var entityId in new HashSet<long>(contractEntities))
             {
                 var entityWorld = ECSWorldOwner;
@@ -697,7 +684,7 @@ namespace AECC.Core
                 void CheckOne(long entid, ECSEntity contentity)
                 {
                     bool violationSeizure = false;
-                    bool yescomponent = false; // ST-квирк partial-формулы, дословно
+                    bool yescomponent = false; // used only by the ST partial-match formula below
                     Dictionary<long, bool> neededComponents = null;
 
                     if (localEntityComponentPresenceSign.TryGetValue(entid, out neededComponents))
@@ -790,10 +777,8 @@ namespace AECC.Core
                         }
                     }
 
-                    // [D1] Историческое расхождение (дословно за флагом, эскалация №10):
-                    // MT проверял пользовательские условия ВСЕГДА (даже после presence-
-                    // нарушения — предикаты дёргались с их сайд-эффектами); ST — только
-                    // при чистом presence.
+                    // [D1] MT checks user conditions always (even after a presence violation —
+                    // predicates run with their side effects); ST only when presence is clean.
                     if ((takeTokens || !violationSeizure) && localContractConditions.TryGetValue(entid, out var conditions))
                     {
                         for (int i = 0; i < conditions.Count; i++)
@@ -825,9 +810,8 @@ namespace AECC.Core
                         return;
                     }
 
-                    // [D2] Историческое расхождение partial-формул (дословно за флагом,
-                    // эскалация №10). В MT-формуле neededComponents мог быть null при
-                    // отсутствии presence-sign — латентный NRE (№21) закрыт гардом.
+                    // [D2] Partial-match formula differs between MT and ST. neededComponents
+                    // can be null when there is no presence-sign for this entity — guarded below.
                     bool partialTake = partialEntityTargetListLockingAllowed && this.Spec._partialEntityFiltering &&
                         (takeTokens
                             ? (entityTokens.Count > 1 || (NoPresenceSignAllowed && neededComponents != null && neededComponents.Count > 0))
@@ -878,7 +862,7 @@ namespace AECC.Core
                 }
             }
 
-            // Строгий финал — общий (дословно у обоих).
+            // Strict finalization — shared by both modes.
             if (globalViolationSeizure && !partialEntityTargetListLockingAllowed && !NotAllIncludedEntitiesPresenceSign)
             {
                 collectedTokens.ForEach(token => token.Dispose());
@@ -888,7 +872,7 @@ namespace AECC.Core
             }
             if (localExecutionEntities.Count == 0)
             {
-                // [D3] Verbose «no entities passed» исторически печатал только MT-путь.
+                // [D3] The verbose "no entities passed" message is only logged on the MT path.
                 if (takeTokens && LoggingLevel == ContractLoggingLevel.Verbose)
                     NLogger.Log($"Contract {this.GetType().Name} (ID: {this.ContractId}): No entities passed contract requirements");
                 lockTokens = new List<IDisposable>();

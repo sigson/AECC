@@ -86,7 +86,6 @@ namespace AECC.Core.Logging
             if (ConsoleColor.Red.Equals(color))
             {
                 Godot.GD.PrintErr(message);
-                //Godot.GD.PrintStack();
             }
             else if (ConsoleColor.DarkYellow.Equals(color))
                 Godot.GD.Print(message);
@@ -118,8 +117,6 @@ namespace AECC.Core.Logging
         public static void Debug(object content) => DebugWrite("DEBUG", ConsoleColor.DarkGreen, content);
         public static void Trace(object content)
         {
-            //if (Server.Instance.Settings.EnableTracing)
-            //    DebugWrite("TRACE", ConsoleColor.DarkGray, content);
         }
 
         public static void Warn(object content) => Write("WARN", ConsoleColor.DarkYellow, content);

@@ -1,23 +1,21 @@
 using System;
 
-using AECC.Core; // видимость Core больше не наследуется от родительского неймспейса
+using AECC.Core;
 
 namespace AECC.Serialization
 {
     /// <summary>
-    /// ФАЗА 4, вынос сборок (ТЗ 4.7): монтаж сериализации на мир. Бывшие строки
-    /// ECSWorld.Configure (`serializationAdapter = adapter ?? GetSerializationAdapter();
-    /// EntityWorldSerializer.InitSerialize(this, serializationAdapter);`) — ДОСЛОВНО здесь:
-    /// мир хранит сериализатор/адаптер object-слотами и не интерпретирует их (гейт
-    /// «Core без ссылки на Serialization»); типизированный доступ — только с этой стороны.
+    /// Mounts serialization onto a world. The world stores the serializer/adapter in
+    /// untyped (object) slots and does not interpret them, since Core has no reference to
+    /// Serialization; typed access is provided only from this side.
     /// </summary>
     public static class SerializationBootstrap
     {
-        /// <summary>Бывший ECSWorld.GetSerializationAdapter (дефолт-фабрика адаптера).</summary>
+        /// <summary>Default adapter factory.</summary>
         public static Func<ISerializationAdapter> GetSerializationAdapter = () => new DummySerializationAdapter();
 
-        /// <summary>Смонтировать сериализацию на мир. Вызывать после Configure
-        /// (или передать адаптер в Configure — Attach уважает уже заполненный слот).</summary>
+        /// <summary>Mounts serialization on the world. Call after Configure
+        /// (or pass an adapter into Configure — Attach respects an already-filled slot).</summary>
         public static EntityNetSerializer Attach(ECSWorld world, ISerializationAdapter adapter = null)
         {
             var effective = adapter
@@ -30,7 +28,7 @@ namespace AECC.Serialization
             return serializer;
         }
 
-        /// <summary>Типизированный доступ к сериализатору мира (object-слот).</summary>
+        /// <summary>Typed access to the world's serializer (backed by an object slot).</summary>
         public static EntityNetSerializer SerializerOf(ECSWorld world)
         {
             return world.EntityWorldSerializer as EntityNetSerializer;

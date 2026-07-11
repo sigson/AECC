@@ -2,11 +2,11 @@ using System;
 using AECC.Abstractions;
 using AECC.Core.Logging;
 using AECC.Extensions;
-using AECC.Extensions.ThreadingSync; // TaskEx живёт здесь
+using AECC.Extensions.ThreadingSync;
 
 namespace AECC.Core
 {
-    /// <summary>Реализация INLogger поверх статического NLogger (фаза 2; в Runtime — с фазы 3).</summary>
+    /// <summary>Реализация INLogger поверх статического NLogger.</summary>
     public sealed class NLoggerAdapter : INLogger
     {
         public static readonly NLoggerAdapter Instance = new NLoggerAdapter();
@@ -18,10 +18,9 @@ namespace AECC.Core
     }
 
     /// <summary>
-    /// Реализация IScheduler поверх существующих TaskEx.RunAsync и TimerCompat (фаза 2).
-    /// Семантика исполнения — дословно прежняя: Run уважает режимы приложения
-    /// (OneThreadMode → синхронно, ThreadsMode → пул), Schedule — TimerCompat + Start.
-    /// Детерминированная тестовая реализация подключается в сетке вторым слоем.
+    /// Реализация IScheduler поверх TaskEx.RunAsync и TimerCompat.
+    /// Run уважает режимы приложения (OneThreadMode → синхронно, ThreadsMode → пул),
+    /// Schedule — TimerCompat + Start.
     /// </summary>
     public sealed class DefaultScheduler : IScheduler
     {
@@ -40,7 +39,7 @@ namespace AECC.Core
         }
     }
 
-    /// <summary>Системные часы (фаза 2). Тестовые часы подключаются через тот же интерфейс.</summary>
+    /// <summary>Системные часы. Тестовые часы подключаются через тот же интерфейс.</summary>
     public sealed class SystemClock : IClock
     {
         public static readonly SystemClock Instance = new SystemClock();

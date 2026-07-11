@@ -5,7 +5,7 @@ using System.Threading;
 
 namespace AECC.Core
 {
-    /// <summary>Числовые id системных полей (ТЗ 4.5.8г): без string-хеша на горячем пути.
+    /// <summary>Числовые id системных полей: без string-хеша на горячем пути.
     /// Строковые имена остаются для произвольных пользовательских полей.</summary>
     public static class SystemFieldId
     {
@@ -14,21 +14,19 @@ namespace AECC.Core
     }
 
     /// <summary>
-    /// Упрочнённый бэкенд identity-sidecar (фаза 3, шаг 8; ТЗ 4.5.8; чинит дефект 6.3).
-    /// Идея 1.11 неприкосновенна: данные привязаны к идентичности (instanceId), а не к
-    /// инстансу — и переживают подмену инстанса при клиентском UpdateDeserialize.
+    /// Потокобезопасный бэкенд identity-sidecar. Данные привязаны к идентичности
+    /// (instanceId), а не к инстансу — и переживают подмену инстанса при клиентском
+    /// UpdateDeserialize.
     ///
-    /// Упрочнения, не меняющие идею:
-    /// (а) потокобезопасность: ConcurrentDictionary вместо голого Dictionary, писавшегося
-    ///     из lifecycle-потоков (гонка данных 6.3);
+    /// Свойства:
+    /// (а) потокобезопасность: ConcurrentDictionary, т.к. запись идёт из lifecycle-потоков;
     /// (б) пер-мировость: скоуп = instanceId мира (0 — процессный скоуп legacy-статиков
-    ///     ECSSharedField) — миры не видят чужие поля и УМИРАЮТ СО СВОИМИ ДАННЫМИ
-    ///     (ECSWorld.Dispose → DropWorld). Дисциплина очистки по идентичности
-    ///     (RemoveAllCachedValuesForId) проходит ПО ВСЕМ скоупам — контракт «OnRemoved
-    ///     вычищает всё для id» сохранён дословно;
-    /// (в) мандат горячего пути: таблица НЕ резолвится на каждый доступ — потребитель
-    ///     кэширует ссылку (паттерн «GetOrAdd однажды → работа по ссылке»; клиентский
-    ///     LifecycleState — ровно один резолв на инстанс, дефект 6.2, см. ECSComponent);
+    ///     ECSSharedField) — миры не видят чужие поля и умирают со своими данными
+    ///     (ECSWorld.Dispose → DropWorld). Очистка по идентичности
+    ///     (RemoveAllCachedValuesForId) проходит по всем скоупам — контракт «OnRemoved
+    ///     вычищает всё для id»;
+    /// (в) горячий путь: таблица не резолвится на каждый доступ — потребитель кэширует
+    ///     ссылку (паттерн «GetOrAdd однажды → работа по ссылке»; см. ECSComponent);
     /// (г) системные поля — числовые слоты в массиве строки (без словаря и string-хеша).
     /// </summary>
     public static class SharedFieldTable
@@ -90,7 +88,7 @@ namespace AECC.Core
         }
 
         /// <summary>Строка идентичности в скоупе (создаётся при первом обращении).
-        /// Потребители горячего пути кэшируют результат (мандат 4.5.8в).</summary>
+        /// Потребители горячего пути кэшируют результат.</summary>
         public static Row GetRow(long worldScope, long id)
         {
             return Scope(worldScope).GetOrAdd(id, _ => new Row());
@@ -101,7 +99,7 @@ namespace AECC.Core
             return Scope(worldScope).TryGetValue(id, out row);
         }
 
-        /// <summary>Очистка идентичности ПО ВСЕМ скоупам (контракт идеи 1.11:
+        /// <summary>Очистка идентичности по всем скоупам (контракт:
         /// RemoveAllCachedValuesForId при OnRemoved/OnRemove вычищает всё для id).</summary>
         public static bool RemoveIdentityEverywhere(long id)
         {
@@ -114,7 +112,7 @@ namespace AECC.Core
             return removed;
         }
 
-        /// <summary>Мир умирает со своими данными (ТЗ 4.5.8б; зовётся из ECSWorld.Dispose).</summary>
+        /// <summary>Мир умирает со своими данными (зовётся из ECSWorld.Dispose).</summary>
         public static void DropWorld(long worldScope)
         {
             if (worldScope == ProcessScope) return; // процессный скоуп не убиваем
@@ -122,10 +120,10 @@ namespace AECC.Core
             _scopes.TryRemove(worldScope, out _);
         }
 
-        /// <summary>Полная очистка (семантика прежнего ECSSharedField.ClearCache).</summary>
+        /// <summary>Полная очистка всех скоупов.</summary>
         public static void Clear() { _scopes.Clear(); }
 
-        // ───── диагностические пробы (сетка 9(и), счётчики прежнего API) ─────
+        // ───── диагностические пробы ─────
 
         public static bool HasSystemValue(long worldScope, long id, int fieldId)
         {

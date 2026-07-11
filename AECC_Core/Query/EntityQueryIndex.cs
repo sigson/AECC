@@ -9,38 +9,35 @@ using AECC.Extensions;
 namespace AECC.Query
 {
     /// <summary>
-    /// ФАЗА 5 (ТЗ 4.6, идея 1.10): индекс запросов мира. Первый шаг слияния «двух индексов»:
-    /// сюда ДОСЛОВНО перенесена вся графовая половина (бывшая «ИНФРАСТРУКТУРА ГРАФА»
-    /// ECSEntityManager: аллокатор graph-id с реюзом через очередь, маппинги
-    /// instanceId↔graphId, транзитивные множества потомков «плати при записи — читай
-    /// мгновенно» (O(глубина) на добавление — осознанная схема, документирована), обходы
-    /// предков в ОДНОМ месте, метрики компонентов). Вторая половина (обратный индекс
-    /// ComponentOwners из ContractsManager) вливается на следующем шаге фазы — она
-    /// сплетена с реакциями контрактов (фаза 6), см. журнал.
+    /// The world's query index: tracks entity/graph topology (parent-descendant
+    /// relationships) and a reverse component-owner index, and answers component-set
+    /// queries scoped to a subtree of the entity graph.
     ///
-    /// Подписка — Core-интерфейс IWorldQueryIndex (Runtime публикует события, Query
-    /// имплементирует сверху). Индекс eventually-consistent (честная оговорка ТЗ 4.6);
-    /// дисциплина goto-race-check'ов реакций контрактов — инвариант, не устраняемый подпиской.
+    /// Subscribed to via the Core interface IWorldQueryIndex (Runtime publishes events,
+    /// Query implements the index on top). The index is eventually consistent: contract
+    /// reactions that read it must still apply their own race-check/retry discipline,
+    /// since consistency is not guaranteed by the subscription alone.
     ///
-    /// Конкурентный режим (закрывает №18): мировой _graphEngineLock снят; топология —
-    /// лок внутри IGraphNodeStore, метрики — MVCC, маппинги — Concurrent*, множества
-    /// потомков — прежние точечные lock(descendants).
+    /// Concurrency: there is no global lock over the graph engine; topology access is
+    /// locked inside IGraphNodeStore, metrics use MVCC snapshots, id mappings use
+    /// Concurrent* collections, and each node's descendant set has its own lock.
     /// </summary>
     public sealed class EntityQueryIndex : IWorldQueryIndex
     {
         private readonly ECSWorld _world;
         private readonly GraphSearchEngine _engine;
 
-        // --- ИНФРАСТРУКТУРА ГРАФА (дословно из ECSEntityManager) ---
-        private const int ROOT_WORLD_NODE_ID = 0; // Корневой узел мира (глобальный контекст)
+        private const int ROOT_WORLD_NODE_ID = 0; // Root node of the world (global context)
         private int _nextGraphId = 1;
         private readonly ConcurrentQueue<int> _freedGraphIds = new ConcurrentQueue<int>();
 
-        // Маппинг long instanceId <-> int graphNodeId
+        // Mapping long instanceId <-> int graphNodeId
         private readonly ConcurrentDictionary<long, int> _entityToGraphId = new ConcurrentDictionary<long, int>();
         private readonly ConcurrentDictionary<int, long> _graphIdToEntity = new ConcurrentDictionary<int, long>();
 
-        // Хранение топологии: для каждой ноды храним HashSet её потомков (прямых и косвенных)
+        // Topology storage: each node keeps a HashSet of its descendants (direct and indirect).
+        // This is a pay-on-write, read-instantly scheme: O(depth) work on structural change,
+        // O(1) lookup on query.
         private readonly ConcurrentDictionary<int, HashSet<int>> _nodeDescendants = new ConcurrentDictionary<int, HashSet<int>>();
 
         public EntityQueryIndex(ECSWorld world)
@@ -48,15 +45,13 @@ namespace AECC.Query
             _world = world;
             _engine = new GraphSearchEngine(new DefaultEcsGraphNodeStore());
 
-            // Инициализация Супер-Корня (дословно из конструктора менеджера)
             _nodeDescendants[ROOT_WORLD_NODE_ID] = new HashSet<int>();
             SyncNodeNeighbors(ROOT_WORLD_NODE_ID);
 
-            // Предзасев обратного индекса (дословно из бывшего InitializeSystems).
             TypeRegistry.Global.RegisteredTypes.ForEach(x => _componentOwners[x.Value] = new HashSet<ECSEntity>());
         }
 
-        // --- ОБХОДЫ (дословно; «вынести обход предков в одно место» — стратегия 3.6) ---
+        // Ancestor traversal is centralized here rather than duplicated at each call site.
 
         private void SyncNodeNeighbors(int graphId)
         {
@@ -87,7 +82,6 @@ namespace AECC.Query
                 currentParent = currentParent.ownerECSObject;
             }
 
-            // Добавляем в глобальный корень мира
             var rootDescendants = _nodeDescendants[ROOT_WORLD_NODE_ID];
             lock (rootDescendants) { rootDescendants.Add(childGraphId); }
             SyncNodeNeighbors(ROOT_WORLD_NODE_ID);
@@ -124,11 +118,8 @@ namespace AECC.Query
             return id;
         }
 
-        // --- СОБЫТИЯ RUNTIME (IWorldQueryIndex) ---
-
         public void OnEntityAdded(ECSEntity entity)
         {
-            // Дословно бывшая графовая часть AddNewEntityReaction.
             int graphId = AllocateGraphId(entity.instanceId);
             AddNodeToAncestors(entity, graphId);
 
@@ -136,28 +127,26 @@ namespace AECC.Query
 
             foreach (var comp in result)
             {
-                _engine.AddMetricToNode(graphId, comp.GetId()); // числовой ключ (6.6)
-                OwnersOf(comp.GetId()).AddI(entity, entity);    // обратный индекс: наличный состав
+                _engine.AddMetricToNode(graphId, comp.GetId());
+                OwnersOf(comp.GetId()).AddI(entity, entity);
             }
         }
 
         public bool OnEntityRemoving(ECSEntity entity)
         {
-            // Шаги 1–2 бывшего InternalGraphRemoval — строго ДО переподчинения детей
-            // (снятие у предков идёт по ещё старой цепочке владельцев — анти-бомба 7.9).
+            // Must run before children are reparented: unlinking from ancestors relies on
+            // the still-current ownership chain.
             if (!_entityToGraphId.TryGetValue(entity.instanceId, out int deletedGraphId))
-                return false; // гейт: нет узла — вся последовательность удаления пропускается (дословно прежний if)
+                return false;
 
-            // 1. Убираем удаляемый узел из списков соседей его предков
             RemoveNodeFromAncestors(entity, deletedGraphId);
 
-            // 2. Очищаем индекс от метрик компонентов этой сущности, перед тем как освободить её ID
             ICollection<ECSComponent> components = entity.entityComponents.Components;
 
             foreach (var comp in components)
             {
                 _engine.RemoveMetricFromNode(deletedGraphId, comp.GetId());
-                OwnersOf(comp.GetId()).RemoveI(entity, entity); // и из обратного индекса
+                OwnersOf(comp.GetId()).RemoveI(entity, entity);
             }
 
             return true;
@@ -165,7 +154,7 @@ namespace AECC.Query
 
         public void OnEntityRemoved(ECSEntity entity)
         {
-            // Шаг 4 бывшего InternalGraphRemoval — после переподчинения: освобождаем узел.
+            // Runs after reparenting: frees the graph node/id for reuse.
             if (_entityToGraphId.TryGetValue(entity.instanceId, out int deletedGraphId))
             {
                 _nodeDescendants.TryRemove(deletedGraphId, out _);
@@ -182,10 +171,10 @@ namespace AECC.Query
                 _engine.AddMetricToNode(graphId, component.GetId());
             }
 
-            // Обратный индекс 1.10(а) (перенос из ContractsManager, слияние — остаток
-            // фазы 5). Goto-race-check-дисциплина — ДОСЛОВНО (индекс eventually-consistent;
-            // корректность контрактов держат локи+перепроверка в TryExecuteContract).
-            var hentities = OwnersOf(component.GetId()); // ФИКС №14: гард вместо голого TryGetValue
+            // The index is eventually consistent, so membership is re-verified after the
+            // add/remove: contract correctness relies on this recheck loop, not on the
+            // index alone.
+            var hentities = OwnersOf(component.GetId());
             racecheckagain:
             bool added = false;
             if (entity.HasComponent(component.GetId()))
@@ -222,17 +211,17 @@ namespace AECC.Query
             }
         }
 
-        // ─── обратный индекс componentTypeId → владельцы (1.10(а)) ───
+        // Reverse index: componentTypeId -> owning entities.
 
         private readonly ConcurrentDictionary<long, HashSet<ECSEntity>> _componentOwners =
             new ConcurrentDictionary<long, HashSet<ECSEntity>>();
 
         public IDictionary<long, HashSet<ECSEntity>> ComponentOwnersView { get { return _componentOwners; } }
 
-        /// <summary>ДЕФЕКТ №14 ЗАКРЫТ: прежняя реакция делала голый TryGetValue и падала
-        /// NRE на компоненте, чей тип не был в реестре при InitializeSystems. Множество
-        /// создаётся по требованию (предзасев из RegisteredTypes сохранён в конструкторе
-        /// ниже — горячему пути не нужен GetOrAdd-аллокатор в 99% случаев).</summary>
+        /// <summary>The owner set is created on demand for component types not seen at
+        /// construction time (pre-seeded from RegisteredTypes), so a component type
+        /// registered later doesn't hit a missing-key error; the common case still avoids
+        /// the GetOrAdd factory allocation since the set already exists.</summary>
         private HashSet<ECSEntity> OwnersOf(long componentTypeId)
         {
             return _componentOwners.GetOrAdd(componentTypeId, _ => new HashSet<ECSEntity>());
@@ -240,8 +229,8 @@ namespace AECC.Query
 
         public HashSet<ECSEntity> FilterEntitiesForComponents(List<long> components)
         {
-            // Тело ДОСЛОВНО из ContractsManager (пересечение от меньшей кардинальности,
-            // ранний выход — идея 1.10(а)).
+            // Intersects starting from the smallest-cardinality owner set, with early exit
+            // once the running intersection is empty.
             if (components == null || components.Count == 0)
                 return new HashSet<ECSEntity>();
 
@@ -271,14 +260,13 @@ namespace AECC.Query
             return result;
         }
 
-        // --- ПОИСК (тело дословно из ECSEntityManager.SearchGraph; метрики — числовые) ---
-
         public IEnumerable<ECSEntity> Search(
             ECSEntity parentScope = null,
             Type[] withComponentTypes = null,
             Type[] withoutComponentTypes = null)
         {
-            // Редирект-голова (мир мог быть сквошнут) — дословно.
+            // The world may have been redirected (e.g. squashed); follow the redirect head
+            // before querying.
             var redirect = _world.entityManager.ResolveRedirect();
             if (redirect != null && redirect.QueryIndex != null)
                 return redirect.QueryIndex.Search(parentScope, withComponentTypes, withoutComponentTypes);
@@ -286,7 +274,7 @@ namespace AECC.Query
             var withMetrics = new List<long>();
             var withoutMetrics = new List<long>();
 
-            // Метрики — через ITypeRegistry (мандат ТЗ 4.6), числовой ключ = type-uid.
+            // Component types are resolved to numeric type-uids via ITypeRegistry.
             if (withComponentTypes != null)
             {
                 foreach (var t in withComponentTypes)

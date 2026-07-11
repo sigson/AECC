@@ -22,7 +22,6 @@ namespace AECC.Collections
             public RWLock lockValue;
         }
         private LockedDictionary<TKey, bool> KeysHoldingStorage = null;
-        //private ConcurrentDictionary<TKey, bool> KeysHoldingLockdownCache = new ConcurrentDictionary<TKey, bool>();
         public bool HoldKeys { get; set; } = false;
         public bool HoldKeyStorage { get; set; } = false;
         private readonly ConcurrentDictionary<TKey, LockedValue> dictionary = new ConcurrentDictionary<TKey, LockedValue>();

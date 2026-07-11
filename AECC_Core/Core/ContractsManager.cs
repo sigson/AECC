@@ -25,7 +25,7 @@ namespace AECC.Core
         //fill all id before running ecs
 
         //key - component id type
-        [Obsolete("Фаза 6 (слияние 1.10): обратный индекс живёт в world.Query (EntityQueryIndex)")]
+        [Obsolete("Обратный индекс живёт в world.Query (EntityQueryIndex)")]
         public IDictionary<long, HashSet<ECSEntity>> ComponentOwners
         {
             get { return world.Query != null ? world.Query.ComponentOwnersView : _componentOwnersDetached; }
@@ -50,7 +50,7 @@ namespace AECC.Core
 
         public void InitializeSystems()
         {
-            // ФАЗА 6: предзасев обратного индекса — в EntityQueryIndex (ведётся по событиям).
+            // Предзасев обратного индекса ведётся в EntityQueryIndex по событиям.
             AllSystems = ECSAssemblyExtensions.GetAllSubclassOf(typeof(ECSExecutableContractContainer)).Where(x => this.staticContractFiltering(x)).Select(x => (ECSExecutableContractContainer)Activator.CreateInstance(x)).Where(x => x.WorldFilter(this.world)).ToList();
             AllSystems = AllSystems.Except(ReturnExceptedSystems()).ToList<ECSExecutableContractContainer>();
             foreach(ECSExecutableContractContainer system in AllSystems)
@@ -112,11 +112,9 @@ namespace AECC.Core
                     if(contract.NowTried >= contract.MaxTries && !contract.ContractExecuted && !contract.InWork)
                     {
                         RemoveContract(contract);
-                        NLogger.Log($"Contract failed to execute after {contract.MaxTries} tries.\n======================\n{(object)contract.GenerationStackTrace ?? "(стек рождения не захвачен: включите ECSExecutableContractContainer.CaptureGenerationStackTrace — дефект 6.7)"}\n======================");
-                        // ФИКС «последнего вздоха» (решение заказчика по эскалации №8):
-                        // раньше та же итерация после dead-letter/удаления сразу звала
-                        // TryExecuteContract ещё раз — исчерпанный контракт мог исполниться
-                        // ПОСЛЕ своего удаления. Исчерпанный лимит = исполнение запрещено.
+                        NLogger.Log($"Contract failed to execute after {contract.MaxTries} tries.\n======================\n{(object)contract.GenerationStackTrace ?? "(стек рождения не захвачен: включите ECSExecutableContractContainer.CaptureGenerationStackTrace)"}\n======================");
+                        // Исчерпанный лимит попыток запрещает исполнение: контракт не должен
+                        // сработать после того, как он уже удалён/dead-letter'ed.
                         continue;
                     }
                     if(contract.TryExecuteContract())
@@ -152,7 +150,7 @@ namespace AECC.Core
                 NLogger.Log("Contract aborted. No conditions");
                 return;
             }
-            if (ECSExecutableContractContainer.CaptureGenerationStackTrace) // 6.7: стек — только под флагом
+            if (ECSExecutableContractContainer.CaptureGenerationStackTrace) // стек — только под флагом
                 contract.GenerationStackTrace = new System.Diagnostics.StackTrace();
             foreach(var entityid in contract.NeededEntities)
             {
@@ -191,10 +189,9 @@ namespace AECC.Core
 
         public void OnEntityComponentAddedReaction(ECSEntity entity, ECSComponent component)
         {
-            // ФАЗА 6 / остаток фазы 5 (слияние 1.10): ведение обратного индекса уехало в
-            // EntityQueryIndex (события OnComponentAdded уже идут туда из менеджера
-            // сущностей); goto-race-check-дисциплина перенесена как инвариант. Здесь
-            // остаётся только контрактная часть реакции.
+            // Ведение обратного индекса живёт в EntityQueryIndex (события OnComponentAdded
+            // уже идут туда из менеджера сущностей). Здесь остаётся только контрактная
+            // часть реакции.
 
             foreach (KeyValuePair<ECSExecutableContractContainer, DictionaryWrapper<long, int>> pair in this.TimeDependContractEntityDatabase)
             {
@@ -225,7 +222,7 @@ namespace AECC.Core
         [Obsolete("Фаза 6 (слияние 1.10): используйте world.Query.FilterEntitiesForComponents")]
         public HashSet<ECSEntity> FilterEntitiesForComponents(List<long> components)
         {
-            if (world.Query != null) // фаза 6: канон — world.Query.FilterEntitiesForComponents
+            if (world.Query != null) // канон — world.Query.FilterEntitiesForComponents
                 return world.Query.FilterEntitiesForComponents(components);
             if (components == null || components.Count == 0)
                 return new HashSet<ECSEntity>();
@@ -258,7 +255,7 @@ namespace AECC.Core
 
         public void OnEntityComponentRemovedReaction(ECSEntity entity, ECSComponent component)
         {
-            // Зеркально: ведение индекса — в EntityQueryIndex.OnComponentRemoved.
+            // Ведение индекса — в EntityQueryIndex.OnComponentRemoved.
             foreach (KeyValuePair<ECSExecutableContractContainer, DictionaryWrapper<long, int>> pair in this.TimeDependContractEntityDatabase)
             {
                 if (pair.Key.TryExecuteContract(false, new List<long> { entity.instanceId }))

@@ -45,7 +45,6 @@ namespace AECC.Collections
 
     public class PriorityEventQueueOneTread<TKey, TEvent> where TEvent : System.Delegate
     {
-        // ... все поля и конструктор остаются прежними ...
         private struct ActionWrapper
         {
             public Guid actionId;
@@ -110,7 +109,6 @@ namespace AECC.Collections
         }
 
 
-        // --- ИСПРАВЛЕННЫЙ МЕТОД ОБРАБОТКИ С ГАРАНТИЕЙ ВЫЗОВА ---
         private void ProcessQueue()
         {
             // 1. Пытаемся захватить "право на обработку". Если кто-то уже работает, выходим.
@@ -271,8 +269,6 @@ namespace AECC.Collections
             _priorityOrder = new List<PriorityWrapper>();
             if (priorityOrder.Count() == 0)
                 throw new ArgumentException("Priority order must not be empty", nameof(priorityOrder));
-            // if (priorityOrder.Distinct().Count() != _priorityOrder.Count)
-            //     throw new ArgumentException("Priority order must contain unique keys", nameof(priorityOrder));
 
             _eventLists = new ConcurrentDictionary<TKey, SynchronizedList<ActionWrapper>>();
             foreach (var key in priorityOrder)
@@ -367,7 +363,6 @@ namespace AECC.Collections
                                         }
                                         LockEx.Lock(_lock, () => !Defines.OneThreadMode, () =>
                                         {
-                                            //_eventLists[prioritynow.priorityValue].RemoveAt(0);
                                             try
                                             {
                                                 _eventLists[prioritynow.priorityValue].RemoveAt(0);

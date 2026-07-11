@@ -32,10 +32,8 @@ namespace AECC.Core
         [IgnoreDataMember]
         public ComponentsDBComponent ownerDB;
 
-        // PHASE 3c: lazy per-component collections. These were eagerly allocated for EVERY
-        // component (~12M Dictionaries + ~12M Lists at 1M x 12). The fields stay fields (the
-        // serialization member set is UNCHANGED — a null field round-trips as null), they just
-        // start null and are allocated only on first real use. All access sites are null-guarded.
+        // Lazily allocated: starts null and is created only on first real use. A null field
+        // round-trips as null through serialization, so all access sites are null-guarded.
         public Dictionary<long, ECSComponentGroup> ComponentGroups = null;//todo: concurrent replace to normal
         [System.NonSerialized]
         [IgnoreDataMember]
@@ -54,14 +52,12 @@ namespace AECC.Core
         [System.NonSerialized]
         private ComponentLifecycleDispatcher _lifecycle = null;
 
-        // Фаза 3, шаги 1+8 (ТЗ 4.5.2, 4.5.8; чинит дефект 6.2): резиденция состояния — по
-        // профилю мира. Сервер (инстансы стабильны) — поле инстанса; клиент — источник истины
-        // identity-keyed (идея 1.11: переживание подмены инстанса при UpdateDeserialize), но
-        // с ОДНОКРАТНЫМ резолвом: новый инстанс резолвит разделяемый диспетчер из
-        // identity-таблицы один раз и держит ссылку в поле (прежний геттер ходил в
-        // GetOrAdd(instanceId, "LifecycleState") на КАЖДОЕ обращение — двойной словарный
-        // лукап со string-хешем на каждом MarkAs*/шаге обработчика). Системное поле —
-        // числовой слот (4.5.8г), скоуп — мир-владелец (4.5.8б).
+        // Residence of the lifecycle state depends on the world profile. On the server
+        // (instances are stable) it lives in an instance field; on the client the source of
+        // truth is identity-keyed (so it survives instance replacement on UpdateDeserialize),
+        // but is resolved once: a new instance looks up the shared dispatcher from the
+        // identity table a single time and caches the reference in a field, avoiding a
+        // dictionary lookup on every access.
         [IgnoreDataMember]
         private ComponentLifecycleDispatcher Lifecycle
         {
@@ -72,7 +68,7 @@ namespace AECC.Core
 
                 var world = this.ECSWorldOwner;
                 ComponentLifecycleDispatcher created;
-                if (world != null && world.Profile.IdentityKeyedLifecycleState) // профиль (ТЗ 4.5.2/4.5.6)
+                if (world != null && world.Profile.IdentityKeyedLifecycleState)
                 {
                     created = (ComponentLifecycleDispatcher)SharedFieldTable
                         .GetRow(world.instanceId, this.instanceId)
@@ -82,17 +78,15 @@ namespace AECC.Core
                 {
                     created = new ComponentLifecycleDispatcher();
                 }
-                // ФИКС ДЕФЕКТА №17 (флейк сетки «MaxActive == 2»): ленивая инициализация была
-                // неатомарной — два потока видели null и получали КАЖДЫЙ СВОЙ диспетчер
-                // (две очереди, два дрейнера). Гонка унаследована: оригинальный геттер серверной
-                // ветки делал то же `if (_x == null) _x = new ...`. CAS гарантирует единственный.
+                // CAS ensures that under concurrent first access only one dispatcher instance wins
+                // and is retained, even if multiple threads race to create one.
                 d = System.Threading.Interlocked.CompareExchange(ref _lifecycle, created, null) ?? created;
                 return d;
             }
         }
 
         /// <summary>Планировщик дрейна: мира-владельца, если он есть; иначе процессный дефолт
-        /// (DefaultScheduler == семантика прежнего прямого TaskEx.RunAsync).</summary>
+        /// (DefaultScheduler).</summary>
         private AECC.Abstractions.IScheduler LifecycleScheduler
         {
             get
@@ -108,10 +102,8 @@ namespace AECC.Core
             NLogger.LogError(ex);
         }
 
-        // ── Оптимизация аллокаций: обработчик ошибок как КЭШ-ПОЛЕ, а не method group ──
-        // Прежде `d.Drain(scheduler, OnLifecycleError)` создавал НОВЫЙ Action<Exception> на
-        // каждую реакцию (в снапшоте — сотни тысяч Action<Exception>). Делегат создаётся
-        // один раз на инстанс и переиспользуется.
+        // Cached delegate: created once per instance and reused, instead of allocating a new
+        // Action<Exception> for every lifecycle reaction.
         [System.NonSerialized]
         [IgnoreDataMember]
         private Action<Exception> _onLifecycleError;
@@ -120,18 +112,17 @@ namespace AECC.Core
             get { return _onLifecycleError ?? (_onLifecycleError = OnLifecycleError); }
         }
 
-        // ── Оптимизация аллокаций: пропуск lifecycle-диспетчера для ЛИСТОВЫХ компонентов ──
         // Компонент без переопределённых OnAdded/OnChanged/OnRemoved не порождает
-        // пользовательских реакций. Для таких (а это подавляющее большинство data-компонентов)
+        // пользовательских реакций. Для таких (подавляющее большинство data-компонентов)
         // диспетчер (ComponentLifecycleDispatcher), замыкания SetPendingAdd/EnqueueChange/
         // SetPendingRemove, Queue<Action> и планирование через RunAsync не нужны:
         //   • Added  — база OnAdded это no-op, если мир не помечает Changed при добавлении;
         //   • Changed— база OnChanged пустая;
         //   • Removed— пользовательской логики нет, штатная очистка исполняется ИНЛАЙН.
         // Условие едино для всех трёх реакций (сохраняет инвариант «Add→Change→Remove»:
-        // если хоть один хук переопределён — все три идут прежним асинхронным путём, чтобы
+        // если хоть один хук переопределён — все три идут асинхронным путём, чтобы
         // не смешивать инлайн и очередь и не нарушить порядок). Проверка переопределений —
-        // рефлексия ОДИН РАЗ на тип, результат кэшируется.
+        // рефлексия один раз на тип, результат кэшируется.
         private static readonly ConcurrentDictionary<Type, bool> _typeHasUserLifecycleHooks
             = new ConcurrentDictionary<Type, bool>();
 
@@ -170,8 +161,6 @@ namespace AECC.Core
 
         public ECSComponent()
         {
-            //componentManagers.ownerComponent = this;
-            //StateReactionQueue = new PriorityEventQueue<StateReactionType, Action>(new List<StateReactionType>() { StateReactionType.Added, StateReactionType.Changed, StateReactionType.Removed }, 1, x => x + 2);
         }
 
         public void DirectiveSetChanged()
@@ -180,7 +169,7 @@ namespace AECC.Core
             {
                 ownerEntity.entityComponents.DirectiveChange(this.GetType());
             }
-            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking) // профиль (идея 1.12/1.15)
+            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking)
             {
                 ownerDB.ChangeComponent(this);
                 ownerDB.DirectiveSetChanged();
@@ -193,7 +182,7 @@ namespace AECC.Core
             {
                 ownerEntity.entityComponents.MarkComponentChanged(this, serializationSilent, eventSilent);
             }
-            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking) // профиль (идея 1.12/1.15)
+            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking)
             {
                 ownerDB.ChangeComponent(this);
                 ownerDB.DirectiveSetChanged();
@@ -224,7 +213,6 @@ namespace AECC.Core
             return ObjectType;
         }
 
-        // overridable functional for damage transformer, after adding component of damage effect - in this method we send transformer action to damage transformers agregator
         /// <summary>
         /// ATTENTION! Use lock(this.SerialLocker) if you want to edit fields value for prevent serialization error!
         /// </summary>
@@ -253,7 +241,7 @@ namespace AECC.Core
 
         protected virtual void OnAdded(ECSEntity entity)
         {
-            if (this.ECSWorldOwner != null && this.ECSWorldOwner.Profile.ServerMarksChangedOnAdd) // профиль (идея 1.15)
+            if (this.ECSWorldOwner != null && this.ECSWorldOwner.Profile.ServerMarksChangedOnAdd)
             {
                 this.MarkAsChanged();
             }

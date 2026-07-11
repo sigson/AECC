@@ -18,14 +18,11 @@ namespace AECC.Collections
         private Dictionary<TKey, TValue> SimpleDictionary = null;
         private ConcurrentDictionary<TKey, TValue> ConcurrentDictionary = null;
 
-        // ДЕФЕКТ №19 (пойман сеткой 6.5 при первом реальном прогоне): раньше режим читался
-        // ЗДЕСЬ НА КАЖДОМ ОБРАЩЕНИИ, а Simple/Concurrent — два НЕЗАВИСИМЫХ бэкинга. Любой
-        // флип OneThreadMode в процессе раздваивал содержимое (реестр типов терял записи,
-        // сделанные в другом режиме) — нарушение мандата ТЗ 4.3 («процессно-глобальная
-        // immutable карта») и дисциплины фазы 1 («режим фиксируется при конструировании»).
-        // Фикс: режим ЗАЩЁЛКИВАЕТСЯ при первом обращении (CAS против гонки первой
-        // инициализации — прежний null-check сам был гоночным). Для процесса с фиксированным
-        // режимом (прод) поведение дословно прежнее.
+        // The concurrency mode (Simple vs Concurrent backing) is latched on first access
+        // via CompareExchange: Simple and Concurrent are two independent backings, so if
+        // the mode were re-read on every access, a mode flip mid-process would split the
+        // content across both backings. Latching keeps a single backing for the lifetime
+        // of the instance and avoids a race on first initialization.
         [NonSerialized]
         private IDictionary<TKey, TValue> _latched;
 
@@ -55,15 +52,11 @@ namespace AECC.Collections
 
         private void AddImpl(TKey key, TValue value)
         {
-            //lock (dictionary)
-            {
-                dictionary.Add(key, value);
-            }
+            dictionary.Add(key, value);
         }
 
         private TValue GetImpl(TKey key)
         {
-            //lock (dictionary)
             return dictionary[key];
         }
 
@@ -94,10 +87,7 @@ namespace AECC.Collections
 
         private void ClearImpl()
         {
-            //lock (dictionary)
-            {
-                dictionary.Clear();
-            }
+            dictionary.Clear();
         }
 
         public TValue this[TKey key] { get => GetImpl(key); set => SetImpl(key, value); }

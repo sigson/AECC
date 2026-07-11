@@ -44,7 +44,6 @@ namespace AECC.Extensions
     }
     public static class HashExtension
     {
-        // Some random MD5 stuff
         public static string MD5(string input)
         {
             if (input == null) input = string.Empty;

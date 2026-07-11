@@ -8,16 +8,11 @@ using BitCollections.Special;
 namespace AECC.Query
 {
     /// <summary>
-    /// ФАЗА 5: движок метрик/пересечений — перенос из Core (тела дословно), два изменения
-    /// по мандатам ТЗ 4.6:
-    ///  1. ДЕФЕКТ 6.6 ЗАКРЫТ: метрики — ЧИСЛОВЫЕ ключи (long = type-uid компонента) вместо
-    ///     строк $"Comp:{id}" — снят аллокационный налог (конкатенация + хеш строки) на
-    ///     каждом Add/Remove компонента и каждом поиске.
-    ///  2. DefaultEcs — за IGraphNodeStore (герметизация); собственный конкурентный режим:
-    ///     метрики — MVCC (MetricIndex: volatile snapshot + CAS), топология — лок внутри
-    ///     стора; внешнего мирового лока больше нет (№18).
-    /// Инварианты 9(з) — пересечение по кардинальности, ранний выход, AND NOT,
-    /// Flush-барьер перед точным поиском — сохранены дословно.
+    /// Движок метрик/пересечений для графового поиска. Метрики адресуются числовыми ключами
+    /// (long = type-uid компонента), что позволяет избежать аллокаций и хеширования строк на
+    /// каждом Add/Remove компонента и каждом поиске. Топология узлов скрыта за
+    /// IGraphNodeStore; конкурентность метрик обеспечивается MVCC (MetricIndex: volatile
+    /// snapshot + CAS), топология защищена своим собственным локом внутри стора.
     /// </summary>
     internal sealed class GraphSearchEngine
     {
@@ -43,7 +38,7 @@ namespace AECC.Query
             _nodes.SetNeighbors(nodeId, neighborIds);
         }
 
-        // Транслятор: изоляция и атомарный счётчик (тело дословно, ключ — long)
+        // Изолирует получение/создание плотного metric-id за атомарным счётчиком.
         private int GetOrAddMetricId(long metric)
         {
             if (!_metricDictionary.TryGetValue(metric, out int id))
@@ -79,10 +74,10 @@ namespace AECC.Query
             _metricIndices[metricId].Add(nodeId);
         }
 
-        // Планировщик селективности и выполнение запроса (тело дословно; ключи — long)
+        // Планировщик селективности и выполнение запроса.
         public IEnumerable<int> Search(int sourceNodeId, long[] withMetrics, long[] withoutMetrics)
         {
-            // 1. O(1) снимок соседей из герметизированного стора
+            // 1. O(1) снимок соседей из стора
             var neighbors = _nodes.GetNeighbors(sourceNodeId);
             if (neighbors == null || neighbors.Length == 0)
                 return Enumerable.Empty<int>();

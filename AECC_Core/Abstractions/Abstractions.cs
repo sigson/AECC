@@ -3,8 +3,8 @@ using System;
 namespace AECC.Abstractions
 {
     /// <summary>
-    /// Тонкая абстракция над NLogger (ТЗ 4.3). Поверхность повторяет реально используемые
-    /// ядром каналы; расширение — по мере выселения подсистем (фазы 3–7).
+    /// Thin abstraction over NLogger. Its surface mirrors the log channels actually used by
+    /// the core.
     /// </summary>
     public interface INLogger
     {
@@ -16,29 +16,27 @@ namespace AECC.Abstractions
     }
 
     /// <summary>
-    /// Планировщик (ТЗ 4.3): абстракция над TaskEx.RunAsync и TimerCompat. Критичен для
-    /// детерминированных тестов lifecycle-очередей и time-depend контрактов: с инжектируемым
-    /// планировщиком порядок Add→Change→Remove проверяется детерминированно (второй слой
-    /// сетки фазы 0, добавляется после этой фазы).
+    /// Scheduler abstraction over TaskEx.RunAsync and TimerCompat. Allows lifecycle-queue and
+    /// time-dependent tests to inject a scheduler so that Add/Change/Remove ordering can be
+    /// verified deterministically.
     /// </summary>
     public interface IScheduler
     {
-        /// <summary>Асинхронное исполнение (семантика TaskEx.RunAsync: уважает режимы приложения).</summary>
+        /// <summary>Asynchronous execution (semantics of TaskEx.RunAsync: respects app modes).</summary>
         void Run(Action action);
 
-        /// <summary>Периодический/одноразовый тик (семантика TimerCompat). Dispose останавливает таймер.</summary>
+        /// <summary>Periodic or one-shot tick (semantics of TimerCompat). Dispose stops the timer.</summary>
         IDisposable Schedule(int intervalMs, Action tick, bool repeating);
     }
 
-    /// <summary>Часы (ТЗ 4.3): абстракция над DateTime/TimerCompat.TimerDateTime для тестируемости времени.</summary>
+    /// <summary>Clock abstraction over DateTime/TimerCompat.TimerDateTime, for testable time.</summary>
     public interface IClock
     {
         long UtcNowTicks { get; }
         DateTime UtcNow { get; }
     }
 
-    /// <summary>Поведенческий вид мира (идея 1.15). Дублирует ECSWorld.WorldTypeEnum на время миграции;
-    /// в фазе 3 ECSWorld переходит на этот enum.</summary>
+    /// <summary>Behavioral kind of a world; mirrors ECSWorld.WorldTypeEnum.</summary>
     public enum WorldKind
     {
         Server,
@@ -47,13 +45,10 @@ namespace AECC.Abstractions
     }
 
     /// <summary>
-    /// Контекст мира (ТЗ 4.3): то немногое, что модели действительно нужно от мира.
-    /// Заменяет цепочку «IDObject → static ECSWorld.GetWorld → весь мир».
-    ///
-    /// Вводится в фазе 2 как контракт; ПОТРЕБИТЕЛИ переводятся в фазе 3 (Runtime-разрез):
-    /// там же интерфейс дорастает доступом к pending-десериализации и профилю мира
-    /// (типы появляются в фазах 3–4). Инстансный кэш мира на IDObject (ECSWorldOwnerCache
-    /// с валидацией по id) сохраняется — резолв контекста только на кэш-промахе.
+    /// Minimal view of a world that a model actually needs, replacing the
+    /// IDObject -> static ECSWorld.GetWorld -> whole-world chain. The per-IDObject world
+    /// cache (ECSWorldOwnerCache, validated by id) is still used underneath — the context is
+    /// only resolved on a cache miss.
     /// </summary>
     public interface IWorldContext
     {

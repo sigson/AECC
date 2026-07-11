@@ -11,9 +11,9 @@ using AECC.Extensions.ThreadingSync;
 using AECC.Core.BuiltInTypes.ComponentsGroup;
 using AECC.Core.BuiltInTypes.Components;
 
-using AECC.Core.Serialization; // резиденты Core: State/Shadow/participant (мигрируют после слайса 2 DBComponent)
+using AECC.Core.Serialization;
 
-using AECC.Core; // видимость Core больше не наследуется от родительского неймспейса
+using AECC.Core;
 
 namespace AECC.Serialization
 {
@@ -162,7 +162,6 @@ namespace AECC.Serialization
             bufEntity.DeserializeEntity();
 
             storage = bufEntity.desEntity.entityComponents;
-            // Транзитный буфер распаковки — локальный (SerializationContainer удалён).
             var landedComponents = storage.DeserializeStorage(serializationAdapter, bufEntity.Components);
             storage.RestoreComponentsAfterSerialization(bufEntity.desEntity, landedComponents);
             bufEntity.desEntity.fastEntityComponentsId = new Dictionary<long, int>(bufEntity.desEntity.entityComponents.Components.ToDictionary(k => k.instanceId, t => 0));
@@ -172,25 +171,17 @@ namespace AECC.Serialization
 
         public override void UpdateDeserialize(byte[] serializedData)
         {
-            // ФАЗА 4 (ТЗ 4.7, дефект 6.5): был lock(this) — ОДИН монитор на весь входящий
-            // поток мира. Теперь порядок ПЕР-СУЩНОСТНЫЙ: write-сторона существующего
-            // StabilizationGate сущности (его документированное назначение с фазы 3:
-            // write — мутации, read — сериализация среза; потребители — ровно
-            // EntityNetSerializer и DBComponent). Следствия:
-            //  * апдейты РАЗНЫХ сущностей идут параллельно;
-            //  * апдейты ОДНОЙ сущности упорядочены её гейтом;
-            //  * SlicedSerialize (read-гейт) больше не может снять срез ПОСРЕДИ
-            //    полуприменённого апдейта той же сущности — прежние lock(this)/ReadLock
-            //    не исключали друг друга; это целевой эффект переезда на гейт.
-            // Дисциплина порядка локов: гейт → lock(serializedDB) → SerialLocker —
-            // совпадает с мутационными API DBComponent; write-гейт реентерабелен
-            // (повторный захват тем же потоком → mock-токен), поэтому внутренние
-            // WriteLock'и DB-агрегатора под нашим гейтом безопасны.
+            // Concurrency is per-entity: each entity's StabilizationGate orders its own
+            // updates (write side) against its own slice serialization (read side), so
+            // updates to different entities proceed in parallel while updates to the same
+            // entity are serialized by that entity's gate. Lock order is gate ->
+            // lock(serializedDB) -> SerialLocker, matching the mutation APIs; the write
+            // gate is reentrant for the same thread, so nested WriteLocks taken under it
+            // are safe.
             ECSEntity entity;
             SerializedEntity bufEntity;
             EntityComponentStorage storage;
 
-            // Декодирование входного пакета — работа над thread-local носителем, вне локов.
             bufEntity = serializationAdapter.DeserializeAdapterEntity(serializedData);
             bufEntity.DeserializeEntity();
             var ecsWorld = this.worldOwner;
@@ -199,13 +190,11 @@ namespace AECC.Serialization
             {
                 var candidate = bufEntity.desEntity;
                 storage = candidate.entityComponents;
-                // Гейт кандидата берётся ДО публикации: с момента AddNewEntity
-                // конкурирующие апдейты этой же сущности встают на этот же гейт —
-                // «публикация + restore» атомарны пер-сущностно, как были атомарны
-                // под прежним монитором.
+                // Take the candidate's gate before publishing it: from AddNewEntity onward,
+                // concurrent updates to the same entity queue on this same gate, so
+                // publish + restore are atomic per-entity.
                 using (candidate.entityComponents.StabilizationGate.WriteLock())
                 {
-                    // Транзитный буфер распаковки — локальный (SerializationContainer удалён).
                     var landedCandidate = storage.DeserializeStorage(serializationAdapter, bufEntity.Components);
                     if (ecsWorld.entityManager.AddNewEntity(candidate, true))
                     {
@@ -222,10 +211,8 @@ namespace AECC.Serialization
                         return;
                     }
                 }
-                // Проигранная гонка добавления (id уже опубликован конкурентом): прежний
-                // монитор исполнил бы этот пакет ВТОРЫМ — как апдейт живой сущности;
-                // воспроизводим ровно эту очерёдность. (AddFailed-лог репозитория уже
-                // отработал внутри AddNewEntity.)
+                // Lost the add race (id already published by a concurrent packet): fall
+                // through and treat this packet as an update to the now-live entity.
                 if (!ecsWorld.entityManager.TryGetEntitySyncronized(candidate.instanceId, out entity))
                 {
                     NLogger.Error($"UpdateDeserialize: entity {candidate.instanceId} lost add-race but is not resolvable — packet dropped");
@@ -235,12 +222,11 @@ namespace AECC.Serialization
 
             using (entity.entityComponents.StabilizationGate.WriteLock())
             {
-                // Транзитный буфер распаковки — локальный (SerializationContainer удалён).
                 var landedUpdate = bufEntity.desEntity.entityComponents.DeserializeStorage(serializationAdapter, bufEntity.Components);
 
-                // ТЗ 4.7: «клиент фильтрует Server-группу и наоборот» — маппинг «какая
-                // группа чужая» уехал в профиль (RestoreFilterForeignGroupId, идея 1.15);
-                // сериализатор больше не знает BuiltIn-групп (готовность к выносу сборки).
+                // Client filters the Server group and vice versa; which group counts as
+                // "foreign" is supplied by the world profile (RestoreFilterForeignGroupId)
+                // rather than hardcoded here.
                 entity.entityComponents.FilterRemovedComponents(bufEntity.desEntity.fastEntityComponentsId.Keys.ToList(), new List<long>() { this.worldOwner.Profile.RestoreFilterForeignGroupId });
                 entity.entityComponents.RegisterAllComponents();
 
@@ -258,9 +244,9 @@ namespace AECC.Serialization
                 }
                 
                 afterDeser.ForEach(tComponent => {
-                    // Фаза 4, шаг 2 (ТЗ 4.7): участник вместо is DBComponent. Хуки зовутся на
-                    // ЖИВОМ инстансе (restoring-режим сохраняет старый инстанс агрегатора,
-                    // перенимая payload) — прежний re-fetch по id сохранён дословно.
+                    // Restore hooks fire on the live instance: restoring mode keeps the old
+                    // aggregator instance and has it take over the incoming payload, so the
+                    // component must be re-fetched by id rather than used directly.
                     if (tComponent is AECC.Abstractions.ISerializationParticipant)
                     {
                         var live = entity.GetComponent(tComponent.GetId());

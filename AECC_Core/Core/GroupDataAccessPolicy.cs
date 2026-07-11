@@ -31,8 +31,8 @@ namespace AECC.Core
 
         /// <summary>
         /// O(N+M) фильтр по политикам доступа. Возвращает только бинарный набор компонентов.
-        /// includeRemoved == true сигнализирует бывший кейс "#INCLUDEREMOVED#"
-        /// (результирующий набор пуст, но политика требует включать удалённые).
+        /// includeRemoved == true означает, что результирующий набор пуст, но политика
+        /// требует включать удалённые компоненты.
         /// </summary>
         public static Dictionary<long, byte[]> ComponentsFilter(ECSEntity baseEntity, ECSEntity otherEntity, out bool includeRemoved)
         {

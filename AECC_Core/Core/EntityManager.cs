@@ -9,7 +9,7 @@ using AECC.Extensions;
 using AECC.Extensions.ThreadingSync;
 using AECC.Collections;
 using AECC.Locking;
-using AECC.Core.Serialization; // Требуется для EntitySerializator
+using AECC.Core.Serialization;
 
 namespace AECC.Core
 {
@@ -17,14 +17,13 @@ namespace AECC.Core
     {
         private ECSWorld world;
 
-        // ФАЗА 3, шаг 3 (ТЗ 4.5.3–4.5.4): хранение сущностей — в EntityRepository (только
-        // хранение + событие прихода/ухода; rescue-точки сквоша ВНУТРИ операций), входной
-        // редирект — в sealed-декораторе RedirectingEntityRepository. Менеджер — слушатель
-        // (переходно; целево — шина из трёх подписок: Query-граф, Contracts, Serialization).
+        // Хранение сущностей — в EntityRepository (только хранение + событие прихода/ухода;
+        // rescue-точки сквоша ВНУТРИ операций), входной редирект — в sealed-декораторе
+        // RedirectingEntityRepository. Менеджер выступает слушателем репозитория.
         public readonly EntityRepository Repository;
         private readonly RedirectingEntityRepository _entities;
 
-        [Obsolete("Фаза 3 (ТЗ 4.5.3): хранилище инкапсулировано в Repository; сырые операции — там же")]
+        [Obsolete("Хранилище инкапсулировано в Repository; сырые операции — там же")]
         public LockedDictionarySlim<long, ECSEntity> EntityStorage { get { return Repository.RawStorage; } }
 
         public LockedDictionarySlim<string, ECSEntity> PreinitializedEntities = new LockedDictionarySlim<string, ECSEntity>();
@@ -33,16 +32,14 @@ namespace AECC.Core
         // ещё не пришедшей сущности, перепроверяются при AddNewEntityReaction вместо опроса.
         public readonly PendingDeserializationRegistry PendingDeserialization = new PendingDeserializationRegistry();
 
-        // ФАЗА 5 (ТЗ 4.6): граф/поиск выселены в AECC.Query (EntityQueryIndex поверх
-        // герметизированного DefaultEcs). Runtime публикует события в Core-интерфейс;
-        // монтаж — QueryBootstrap.Attach(world). null = мир без поиска (breaking: Search
-        // требует Attach).
+        // Граф/поиск живут в AECC.Query (EntityQueryIndex поверх герметизированного DefaultEcs).
+        // Runtime публикует события в Core-интерфейс; монтаж — QueryBootstrap.Attach(world).
+        // null = мир без поиска (Search требует Attach).
         internal IWorldQueryIndex QueryIndex;
 
         // --- ИНФРАСТРУКТУРА СКВОШ-РЕДИРЕКТА ---
         // Состояние цепочки живёт в EntityRepository (оно нужно rescue-точкам внутри операций).
-        // Здесь — переходные проекции для НЕ-репозиторных операций менеджера
-        // (OnAdd/RemoveComponent, SearchGraph): уходят в подписки фаз 5–6.
+        // Здесь — проекции для НЕ-репозиторных операций менеджера (OnAdd/RemoveComponent, SearchGraph).
 
         internal void ActivateSquashRedirect(ECSEntityManager target)
         {
@@ -55,15 +52,11 @@ namespace AECC.Core
             return target == null ? null : (ECSEntityManager)target.HostTag;
         }
 
-        // ФАЗА 5: инфраструктура графа (ROOT/аллокатор/маппинги/_nodeDescendants)
-        // перенесена ДОСЛОВНО в AECC.Query.EntityQueryIndex.
-
         public ECSEntityManager(ECSWorld world)
         {
             this.world = world;
             Repository = new EntityRepository(this, this);
             _entities = new RedirectingEntityRepository(Repository);
-            // ФАЗА 5: движок графа и корневой узел — в EntityQueryIndex (QueryBootstrap.Attach).
         }
 
         // --- БАЗОВЫЕ МЕТОДЫ ПОИСКА ---
@@ -92,30 +85,28 @@ namespace AECC.Core
 
         // --- ТОПОЛОГИЯ ГРАФА ---
 
-        // ФАЗА 5: _graphEngineLock (№18) СНЯТ — Query получил честную границу:
-        // мутации/чтения DefaultEcs — под собственным локом IGraphNodeStore-реализации,
+        // Мутации/чтения DefaultEcs идут под собственным локом IGraphNodeStore-реализации,
         // метрики — MVCC (MetricIndex). Обходы предков (Sync/Add/RemoveNodeToAncestors)
-        // перенесены ДОСЛОВНО в EntityQueryIndex (одно место — мандат стратегии 3.6).
+        // живут в EntityQueryIndex.
 
         // --- ЛОГИКА ДОБАВЛЕНИЯ СУЩНОСТЕЙ ---
 
         public bool AddNewEntity(ECSEntity Entity, bool silent = false)
         {
-            // Входной редирект — декоратор; prepare/rescue/reaction — внутри репозитория
-            // (граница ТЗ 4.5.4). Семантика дословно прежняя.
+            // Входной редирект — декоратор; prepare/rescue/reaction — внутри репозитория.
             return _entities.Add(Entity, silent);
         }
 
-        // ───── IEntityRepositoryListener (переходно: менеджер лично исполняет три будущие подписки) ─────
+        // ───── IEntityRepositoryListener ─────
 
-        /// <summary>Бывш. `Entity.manager = this; Entity.ECSWorldOwner = world;` перед TryAdd.</summary>
+        /// <summary>Готовит сущность к владению этим миром перед TryAdd.</summary>
         public void PrepareForThisWorld(ECSEntity entity)
         {
             entity.manager = this;
             entity.ECSWorldOwner = world;
         }
 
-        /// <summary>Бывш. NLogger.Error в ветке неудачного TryAdd (репозиторий логгера не знает).</summary>
+        /// <summary>Логирует неудачный TryAdd (репозиторий логгера не знает).</summary>
         public void AddFailed(ECSEntity entity)
         {
             NLogger.Error($"error add entity {entity.instanceId} to storage");
@@ -128,7 +119,7 @@ namespace AECC.Core
 
         public void AddNewEntityReaction(ECSEntity Entity, bool silent = false)
         {
-            // ФАЗА 5: аллокация узла + предки + Comp-метрики состава — в индексе (было дословно здесь).
+            // Аллокация узла + предки + Comp-метрики состава — в индексе.
             QueryIndex?.OnEntityAdded(Entity);
 
             if (!silent)
@@ -155,7 +146,7 @@ namespace AECC.Core
         public void RemoveEntity(ECSEntity Entity)
         {
             // Входной редирект — декоратор; rescue после неудачного remove — внутри
-            // репозитория (граница ТЗ 4.5.4); пост-remove хвост — событие EntityRemoved.
+            // репозитория; пост-remove хвост — событие EntityRemoved.
             _entities.Remove(Entity);
         }
 
@@ -164,10 +155,8 @@ namespace AECC.Core
             InternalGraphRemoval(entity);
 
             entity.OnDelete();
-            // Гейт пустых контрактных реакций: при пустых контрактных базах прежний
-            // безусловный вызов не только аллоцировал work item, но и стабильно логировал
-            // ложный "core system error" (cleared никогда не выставлялся на пустом
-            // TimeDependContractEntityDatabase).
+            // Контрактная реакция планируется только если для сущности есть на что реагировать —
+            // иначе не тратим work item на пустую контрактную базу.
             if (this.world.contractsManager.HasEntityReactions(entity.instanceId))
             {
                 TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityDestroyed(entity); });
@@ -176,10 +165,10 @@ namespace AECC.Core
 
         private void InternalGraphRemoval(ECSEntity Entity)
         {
-            // ФАЗА 5: шаги 1–2 (снятие у предков по СТАРОЙ цепочке владельцев + чистка
-            // метрик) и шаг 4 (освобождение узла) — в индексе; шаг 3 (переподчинение,
-            // «логическое, графу больше ничего не надо») — здесь. Дословный порядок 1→2→3→4
-            // и гейт «нет узла — нет всей последовательности» сохранены (анти-бомба 7.9).
+            // Снятие у предков по цепочке владельцев + чистка метрик и освобождение узла —
+            // в индексе; переподчинение детей — здесь. Порядок фиксирован: узел снимается
+            // из индекса, затем дети переподчиняются, затем узел освобождается; если узла
+            // не было — вся последовательность пропускается.
             // Мир без индекса: переподчинение выполняется безусловно (детей нельзя осиротить).
             bool hadNode = QueryIndex?.OnEntityRemoving(Entity) ?? true;
             if (hadNode)
@@ -233,12 +222,10 @@ namespace AECC.Core
                 return;
             }
 
-            // ФАЗА 5: метрика — событие индексу (числовой ключ вместо $"Comp:{id}" — дефект 6.6).
+            // Метрика — событие индексу (числовой ключ).
             if (Entity != null) QueryIndex?.OnComponentAdded(Entity, Component);
-            // ОПТИМИЗАЦИЯ ПАМЯТИ (work-item flood): контрактная реакция планируется в пул
-            // ТОЛЬКО если контрактной машинерии есть на что реагировать. Прежде на КАЖДОЕ
-            // добавление компонента в очередь пула уходило замыкание (DisplayClass + Action +
-            // WaitCallback), которое при пустых контрактных базах итерировало пустые словари.
+            // Контрактная реакция планируется в пул только если контрактной машинерии есть
+            // на что реагировать, чтобы не тратить work item на пустые контрактные базы.
             if (Entity != null && this.world.contractsManager.HasEntityReactions(Entity.instanceId))
             {
                 TaskEx.RunAsync(() => { this.world.contractsManager.OnEntityComponentAddedReaction(Entity, Component); });
@@ -275,16 +262,16 @@ namespace AECC.Core
         /// <param name="parentScope">Контекст поиска. Если указан, область аппаратно сужается до потомков этой ноды.</param>
         /// <param name="withComponentTypes">Требуемые типы компонентов.</param>
         /// <param name="withoutComponentTypes">Исключаемые типы компонентов.</param>
-        [Obsolete("Фаза 5 (ТЗ 4.6, breaking): используйте world.Query.Search(scope, with, without)")]
+        [Obsolete("Используйте world.Query.Search(scope, with, without)")]
         public IEnumerable<ECSEntity> SearchGraph(
-            ECSEntity parentScope = null, 
-            Type[] withComponentTypes = null, 
+            ECSEntity parentScope = null,
+            Type[] withComponentTypes = null,
             Type[] withoutComponentTypes = null)
         {
-            // Тело (метрики через ITypeRegistry, scope-резолв, материализация) — ДОСЛОВНО
-            // в EntityQueryIndex.Search; редирект-голова — тоже там (мир мог быть сквошнут).
+            // Тело (метрики через ITypeRegistry, scope-резолв, материализация) и
+            // редирект-голова (мир мог быть сквошнут) живут в EntityQueryIndex.Search.
             if (QueryIndex == null)
-                return System.Linq.Enumerable.Empty<ECSEntity>(); // мир без Attach (breaking, см. журнал)
+                return System.Linq.Enumerable.Empty<ECSEntity>(); // мир без Attach
             return QueryIndex.Search(parentScope, withComponentTypes, withoutComponentTypes);
         }
     }

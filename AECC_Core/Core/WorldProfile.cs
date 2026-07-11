@@ -5,43 +5,33 @@ using System.Collections.Generic;
 namespace AECC.Core
 {
     /// <summary>
-    /// Профиль мира (ТЗ 4.5.6, идея 1.15): поведенческая разница Server/Client/Offline —
-    /// неприкосновенная идея, но читается она В ОДНОМ МЕСТЕ. Флаги ВЫЧИСЛЯЮТСЯ ПРИ СОЗДАНИИ
-    /// мира (замена россыпи `if (WorldType == ...)` по шести файлам); имена — по ПОВЕДЕНИЮ,
-    /// а не по типу мира.
-    ///
-    /// Вырожденное тройное условие (ТЗ 2.3):
-    ///   (!Cut) || (owner==null && !Cut) || (owner!=null && Kind!=Offline && !Cut)
-    /// алгебраически равно `!Defines.CutClientServerCollections` — все world-type-ветки
-    /// МЕРТВЫ. По мандату 4.5.6 оно вычисляется один раз в один bool
-    /// (<see cref="MaintainsSerializationMirrors"/> / <see cref="EagerAccessPolicyCollections"/>);
-    /// мёртвая семантика сознательно НЕ «чинится» — поведение сохраняется дословно.
+    /// Профиль мира: поведенческая разница Server/Client/Offline читается в одном месте.
+    /// Флаги вычисляются при создании мира; имена — по поведению, а не по типу мира.
     /// </summary>
     public sealed class WorldProfile
     {
         public readonly ECSWorld.WorldTypeEnum Kind;
 
-        /// <summary>Вести сериализационные зеркала (RemovedComponents, fastEntityComponentsId;
-        /// бывш. также SerializationContainer — удалён, оптимизация памяти). Бывш. вырожденное тройное условие == !Defines.Cut...</summary>
+        /// <summary>Вести сериализационные зеркала (RemovedComponents, fastEntityComponentsId).</summary>
         public readonly bool MaintainsSerializationMirrors;
 
         /// <summary>Создавать коллекции политик доступа в конструкторе сущности.
-        /// То же вырожденное условие (значение идентично Maintains...), имя — по потребителю.</summary>
+        /// Значение идентично MaintainsSerializationMirrors, имя — по потребителю.</summary>
         public readonly bool EagerAccessPolicyCollections;
 
-        /// <summary>Клиентская десериализация: ссылки могут прийти позже → событийный retry
-        /// (идея 1.8). false = серверная/оффлайн синхронная ветка.</summary>
+        /// <summary>Клиентская десериализация: ссылки могут прийти позже → событийный retry.
+        /// false = серверная/оффлайн синхронная ветка.</summary>
         public readonly bool ClientRetryOnMissingRefs;
 
         /// <summary>Состояние lifecycle-диспетчера — identity-keyed в ECSSharedField
-        /// (клиент: инстансы подменяются при UpdateDeserialize, идея 1.11);
-        /// false — поле инстанса (сервер: инстансы стабильны, таблица была бы регрессией; ТЗ 4.5.2).</summary>
+        /// (клиент: инстансы подменяются при UpdateDeserialize);
+        /// false — поле инстанса (сервер: инстансы стабильны, таблица была бы регрессией).</summary>
         public readonly bool IdentityKeyedLifecycleState;
 
-        /// <summary>Path-контейнеры всегда перечитывают кэш (клиентский режим AlwaysUpdateCache, идея 1.5).</summary>
+        /// <summary>Path-контейнеры всегда перечитывают кэш (клиентский режим AlwaysUpdateCache).</summary>
         public readonly bool AlwaysUpdatePathCache;
 
-        /// <summary>Компонент с ownerDB маркирует изменения через DB-агрегатор (Server/Offline; идея 1.12).</summary>
+        /// <summary>Компонент с ownerDB маркирует изменения через DB-агрегатор (Server/Offline).</summary>
         public readonly bool DbAuthoritativeChangeMarking;
 
         /// <summary>OnAdded по умолчанию помечает компонент изменённым (только Server).</summary>
@@ -50,16 +40,13 @@ namespace AECC.Core
         /// <summary>Клиентские компонент-группы вместо серверных (ветвление конструктора ComponentManager).</summary>
         public readonly bool ClientComponentGroups;
 
-        /// <summary>Интервал активного прохода time-depend контрактов (бывший hardcode 5 мс
-        /// в InitWorldScope; ТЗ 4.5.7 — таймер уходит в Start()).</summary>
+        /// <summary>Интервал активного прохода time-depend контрактов.</summary>
         public readonly int TimeDependContractsIntervalMs;
 
-        /// <summary>Группа, ИСКЛЮЧАЕМАЯ из зачистки при UpdateDeserialize-фильтре
-        /// (ТЗ 4.7: «клиент фильтрует Server-группу и наоборот» → профиль). Свойство
-        /// ленивое: статические Id групп выставляются TypeUid-механизмом 1.14 позже
-        /// создания профиля. Транзитно резолвится через BuiltIn-статики (одна сборка);
-        /// при выносе AECC.BuiltIn (фаза 7) значение инжектится конфигурацией мира —
-        /// Runtime/Serialization не должны ссылаться на BuiltIn (граф §3).</summary>
+        /// <summary>Группа, исключаемая из зачистки при UpdateDeserialize-фильтре
+        /// (клиент фильтрует Server-группу и наоборот). Свойство ленивое: статические Id
+        /// групп выставляются TypeUid-механизмом позже создания профиля. Резолвится через
+        /// BuiltIn-статики; Runtime/Serialization не должны ссылаться на BuiltIn напрямую.</summary>
         public long RestoreFilterForeignGroupId
         {
             get
@@ -73,7 +60,7 @@ namespace AECC.Core
         public WorldProfile(ECSWorld.WorldTypeEnum kind, int timeDependContractsIntervalMs = 5)
         {
             Kind = kind;
-            bool cut = Defines.CutClientServerCollections; // захват при создании мира (4.5.6)
+            bool cut = Defines.CutClientServerCollections; // захват при создании мира
             MaintainsSerializationMirrors = !cut;
             EagerAccessPolicyCollections = !cut;
             ClientRetryOnMissingRefs = kind == ECSWorld.WorldTypeEnum.Client;
@@ -86,9 +73,8 @@ namespace AECC.Core
         }
 
         /// <summary>
-        /// Профильное чтение вырожденного условия для объектов, у которых мира может не быть:
-        /// с миром — захваченный при создании мира bool; без мира — живое чтение Defines
-        /// (в точности прежняя семантика null-owner-ветки).
+        /// Профильное чтение для объектов, у которых мира может не быть: с миром —
+        /// захваченный при создании мира bool; без мира — живое чтение Defines.
         /// </summary>
         public static bool SerializationCollections(ECSWorld world)
         {
@@ -97,11 +83,10 @@ namespace AECC.Core
     }
 
     /// <summary>
-    /// Инстансный реестр миров (ТЗ 4.5.5): long → ECSWorld вместо статических Func
-    /// `ECSWorld.Get*`. Мир регистрируется в Configure/InitWorldScope и уходит в Dispose.
-    /// Статические Func-фасады со старыми сигнатурами остаются на переходный период
-    /// ([Obsolete], их дефолтные реализации ходят сюда); точка переопределения
-    /// <c>ECSWorld.GetWorld</c> сохраняется для интеграций и тестов.
+    /// Инстансный реестр миров: long → ECSWorld вместо статических Func `ECSWorld.Get*`.
+    /// Мир регистрируется в Configure/InitWorldScope и уходит в Dispose.
+    /// Статические Func-фасады со старыми сигнатурами остаются как [Obsolete] и делегируют
+    /// сюда; точка переопределения <c>ECSWorld.GetWorld</c> сохраняется для интеграций и тестов.
     /// </summary>
     public sealed class WorldRegistry
     {

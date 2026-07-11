@@ -5,18 +5,14 @@ using AECC.Locking;
 namespace AECC.Core.Logging
 {
     /// <summary>
-    /// Реализация <see cref="IEscapeDiagnostics"/> поверх NLogger (ТЗ 4.1.2).
-    /// Восстанавливает утраченную диагностику deadlock escape: сообщение уровня Error летит
-    /// в лог безусловно (как в старом RWLock: "HALT! DEADLOCK ESCAPE! ..."), stack trace —
-    /// только при включённом <see cref="LockDiagnostics.CaptureEscapeStackTrace"/>.
-    /// С фазы 3 эта реализация переезжает в AECC.Runtime поверх INLogger.
+    /// Implementation of <see cref="IEscapeDiagnostics"/> backed by NLogger.
+    /// The Error-level message is always logged; the stack trace is only appended
+    /// when <see cref="LockDiagnostics.CaptureEscapeStackTrace"/> is enabled.
     /// </summary>
     public sealed class NLoggerEscapeDiagnostics : IEscapeDiagnostics
     {
         public void DeadlockEscape(string message, string stackTrace)
         {
-            // Канал прежний: ERRORLOCK (NLogger.LogErrorLocking), как в диагностическом
-            // варианте старого RWLock; сообщение — дословно старое.
             if (stackTrace == null)
                 NLogger.LogErrorLocking(message);
             else
@@ -30,9 +26,10 @@ namespace AECC.Core.Logging
     }
 
     /// <summary>
-    /// Установка диагностики лок-ядра. Вызывается из статического конструктора Defines
-    /// (т.е. при первом же касании Defines кем угодно) и из ECSWorld.InitWorldScope —
-    /// избыточность намеренная: no-op сток в Kernel допустим только для юнит-бенчей.
+    /// Installs the lock-core diagnostics sink. Called from Defines' static constructor
+    /// (i.e. on first touch of Defines by anyone) and from ECSWorld.InitWorldScope; the
+    /// redundant call sites are intentional, since a no-op sink in Kernel is only
+    /// acceptable for unit benchmarks.
     /// </summary>
     public static class KernelBootstrap
     {

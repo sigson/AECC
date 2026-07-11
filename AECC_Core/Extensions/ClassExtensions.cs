@@ -34,10 +34,8 @@ namespace AECC.Extensions
 				throw new ArgumentException("startFloat must be less than endFloat");
 			}
 
-			// Генерация случайного числа в диапазоне [0, 1)
 			float randomValue = (float)random.NextDouble();
 
-			// Масштабирование и смещение для получения числа в диапазоне [startFloat, endFloat)
 			return startFloat + randomValue * (endFloat - startFloat);
 		}
 		
@@ -67,8 +65,8 @@ namespace AECC.Extensions
             return AECC.Core.TypeRegistry.Global.GetType(id);
         }
 
-        /// <summary>Фаза 2, дефект 6.1: резолв мемоизирован в реестре — рефлексия один раз
-        /// на тип за процесс вместо каждого обращения к компоненту по Type (Kid()).</summary>
+        /// <summary>Type-to-id resolution is memoized in the registry, so reflection
+        /// runs once per type per process instead of on every lookup.</summary>
         public static long TypeId(this Type id)
         {
             return AECC.Core.TypeRegistry.Global.GetId(id);

@@ -1,4 +1,4 @@
-using System.IO; // оригинал собирался с ImplicitUsings — восстанавливаем явно
+using System.IO;
 using AECC.Core;
 using AECC.Core.Logging;
 using AECC.Extensions.ThreadingSync;
