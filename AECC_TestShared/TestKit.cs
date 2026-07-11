@@ -122,10 +122,11 @@ namespace AECC.TestKit
             try { return condition(); } catch { return false; }
         }
 
-        public bool AwaitCheck(string name, Func<bool> condition, int timeoutMs = 3000)
+        public bool AwaitCheck(string name, Func<bool> condition, int timeoutMs = 3000, string detail = "")
         {
             bool ok = Await(condition, timeoutMs);
-            return Check(name, ok, ok ? "" : "таймаут " + timeoutMs + " мс");
+            var msg = "таймаут " + timeoutMs + " мс" + (string.IsNullOrEmpty(detail) ? "" : "; " + detail);
+            return Check(name, ok, ok ? "" : msg);
         }
 
         public int Total { get { return _results.Count; } }

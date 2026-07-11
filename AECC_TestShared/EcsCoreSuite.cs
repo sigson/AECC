@@ -243,11 +243,14 @@ namespace AECC.TestKit
             });
             r.Check("ExecuteOnNotHasComponent исполнился на отсутствующем", absentOk && absentRan);
 
-            // 5) Lockdown хранилища (используется в OnEntityDelete)
-            r.Try("EnterLockdown/ExitLockdown", () =>
+            // 5) Write-лок ВСЕГО хранилища компонентов (публичный фасад над локдауном ComponentStore,
+            //    используется в OnEntityDelete). Сам ComponentStore internal — сюда не достучаться.
+            r.Try("GetWriteLockedComponentStorage (локдаун всего хранилища)", () =>
             {
-                e.entityComponents.Store.EnterLockdown();
-                e.entityComponents.Store.ExitLockdown();
+                using (var storageToken = e.entityComponents.GetWriteLockedComponentStorage())
+                {
+                    // под локдауном хранилище недоступно другим потокам
+                }
             });
 
             // 6) StabilizationGate: read (сериализация) vs write (мутация DB)

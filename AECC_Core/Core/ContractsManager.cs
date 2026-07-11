@@ -294,10 +294,9 @@ namespace AECC.Core
             {
                 contracts.ForEach(x => RemoveContract(x));
             }
-            if(!cleared)
-            {
-                NLogger.LogError("core system error");
-            }
+            // P6: раньше здесь был NLogger.LogError("core system error") — он срабатывал на
+            // КАЖДОМ удалении сущности, не подписанной ни на один time-depend контракт,
+            // то есть практически на любой. Это не ошибка: чистить просто нечего.
         }
 
         public void OnEntityCreated(ECSEntity entity)

@@ -60,7 +60,9 @@ namespace AECC.Core
             }
             set{
                 ownerECSObjectStorage = value;
-                ownerECSObjectId = value.instanceId;
+                // P4: value == null — легальный сценарий (отвязка ребёнка от удаляемого
+                // родителя: RemoveChildObject / ReparentChildrenUpwards). Раньше здесь был NRE.
+                ownerECSObjectId = value != null ? value.instanceId : 0;
                 OnUpdateOwner(value);
                 ChangesState = IECSObjectSerializedStateMode.Changed;
             }
@@ -100,6 +102,13 @@ namespace AECC.Core
         internal LockedDictionarySlim<long, IECSObject> ChildrenForSerialization
         {
             get { return childECSObjects; }
+        }
+
+        /// <summary>P5: живое дерево детей БЕЗ материализации пустого словаря
+        /// (null == детей не было). Нужно графовым операциям удаления.</summary>
+        internal LockedDictionarySlim<long, IECSObject> ChildrenLiveOrNull
+        {
+            get { return storagechildECSObjects; }
         }
 
         /// <summary>Мост тени к пользовательскому хуку (хук остаётся protected-API модели,

@@ -33,7 +33,9 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
                 {
                     NewConfig = newconfig,
                     configHash = ConstantService.instance.hashConfigFilesZip,
-                    Destination = this.Destination
+                    // P9: this.Destination у ВХОДЯЩЕГО события всегда null ([IgnoreMember],
+                    // по проводу не едет). Отвечать надо на сокет-источник.
+                    Destination = this.SocketSource != null ? this.SocketSource.CachedDestination : this.Destination
                 });
                 //NetworkingService.instance.Send(this.SocketSource, .GetNetworkPacket());
             }

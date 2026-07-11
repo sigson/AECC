@@ -169,7 +169,12 @@ namespace AECC.Core
             {
                 ownerEntity.entityComponents.DirectiveChange(this.GetType());
             }
-            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking)
+            // P7: мир мог не доехать до вложенного компонента (восстановление из сети,
+            // ручная сборка DB) — резолвим через владельцев и не падаем на null.
+            var dbWorldD = this.ECSWorldOwner
+                           ?? (ownerEntity != null ? ownerEntity.ECSWorldOwner : null)
+                           ?? (ownerDB != null ? ownerDB.ECSWorldOwner : null);
+            if(ownerDB != null && dbWorldD != null && dbWorldD.Profile.DbAuthoritativeChangeMarking)
             {
                 ownerDB.ChangeComponent(this);
                 ownerDB.DirectiveSetChanged();
@@ -182,7 +187,11 @@ namespace AECC.Core
             {
                 ownerEntity.entityComponents.MarkComponentChanged(this, serializationSilent, eventSilent);
             }
-            if(ownerDB != null && this.ECSWorldOwner.Profile.DbAuthoritativeChangeMarking)
+            // P7: см. DirectiveSetChanged.
+            var dbWorldM = this.ECSWorldOwner
+                           ?? (ownerEntity != null ? ownerEntity.ECSWorldOwner : null)
+                           ?? (ownerDB != null ? ownerDB.ECSWorldOwner : null);
+            if(ownerDB != null && dbWorldM != null && dbWorldM.Profile.DbAuthoritativeChangeMarking)
             {
                 ownerDB.ChangeComponent(this);
                 ownerDB.DirectiveSetChanged();

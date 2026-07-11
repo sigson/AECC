@@ -59,7 +59,11 @@ namespace AECC.Harness.Services
                 NetworkService.instance.EventManager.Dispatch(new AuthActionFailedEvent()
                 {
                     Reason = "Wrong username or password",
-                    Destination = clientAuthEvent.Destination
+                    // P10: у ВХОДЯЩЕГО события Destination всегда null ([IgnoreMember]).
+                    // Отвечать надо на сокет-источник, иначе клиент не получит отказ.
+                    Destination = clientAuthEvent.SocketSource != null
+                        ? clientAuthEvent.SocketSource.CachedDestination
+                        : clientAuthEvent.Destination
                 });
             }
         }

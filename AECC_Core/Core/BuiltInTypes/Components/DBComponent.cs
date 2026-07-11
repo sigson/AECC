@@ -357,7 +357,10 @@ namespace AECC.Core.BuiltInTypes.Components
                         var registry = owner.ECSWorldOwner?.entityManager?.PendingDeserialization;
                         if (registry != null)
                         {
-                            registry.Register(owner, () => owner.UnserializeDB(true));
+                            // P11: ключ — Serial-стор, а НЕ owner. По ключу owner тот же реестр
+                            // использует SerializationShadow, и её безусловный Unregister(owner)
+                            // стирал наш ретрай (Dictionary<object,Action> — один экшен на ключ).
+                            registry.Register(this, () => owner.UnserializeDB(true));
                             // register-then-recheck: владелец мог прийти во время обработки до регистрации.
                             if (owner.serializedDBNonEO.Any(x => x.Key.ECSObject != null))
                                 TaskEx.RunAsync(() => owner.UnserializeDB(true));
@@ -622,6 +625,10 @@ namespace AECC.Core.BuiltInTypes.Components
                         component.ownerEntity = eCSComponent.ownerEntity;
                     }
                     component.ownerDB = this;
+                    // P7: вложенному компоненту надо проставить мир, иначе ECSWorldOwner == null
+                    // и MarkAsChanged()/DirectiveSetChanged() падают на .Profile.
+                    if (component.ECSWorldOwnerId == 0)
+                        component.ECSWorldOwnerId = this.ECSWorldOwnerId;
                     components[component.instanceId] = (component, ComponentState.Created);
                     DB[ownerComponent.instanceId] = components;
                     ComponentOwners[component.instanceId] = ownerComponent.instanceId;
@@ -668,6 +675,9 @@ namespace AECC.Core.BuiltInTypes.Components
                             component.ownerEntity = eCSComponent.ownerEntity;
                         }
                         component.ownerDB = this;
+                        // P7: см. AddComponent — без мира MarkAsChanged() бросит NRE.
+                        if (component.ECSWorldOwnerId == 0)
+                            component.ECSWorldOwnerId = this.ECSWorldOwnerId;
                         components[component.instanceId] = (component, ComponentState.Created);
                         ComponentOwners[component.instanceId] = ownerComponent.instanceId;
                         if(!OwnerPaths.ContainsKey(ownerComponent.instanceId))

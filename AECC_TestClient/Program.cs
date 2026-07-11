@@ -204,7 +204,7 @@ namespace AECC.TestClient
             R.Section("C2 · регистрация / логин / relogin");
 
             // Проверка доступности логина. ВНИМАНИЕ: IsUsernameAvailableEvent во фреймворке
-            // обрабатывается сервером, но ОТВЕТ КЛИЕНТУ НЕ ОТПРАВЛЯЕТСЯ (см. FRAMEWORK_MAP §10.5).
+            // обрабатывается сервером, но ОТВЕТ КЛИЕНТУ НЕ ОТПРАВЛЯЕТСЯ (см. FRAMEWORK_MAP §10.14).
             _usernameAnswer = null;
             Send(new IsUsernameAvailableEvent { Username = TK.User });
             Thread.Sleep(1200);
@@ -393,9 +393,54 @@ namespace AECC.TestClient
             Cmd(TK.C_SendChestOwner);
             R.AwaitCheck("владелец строк приехал", () => Ent(_chestOwnerId) != null, 15000);
 
-            R.AwaitCheck("после прихода владельца DB-строки восстановились (событийный retry)",
-                () => inv.GetComponentsByType<ItemComponent>().Count == 2, 15000,
-                "items=" + inv.GetComponentsByType<ItemComponent>().Count);
+            bool restored = TestReport.Await(() => inv.GetComponentsByType<ItemComponent>().Count == 2, 15000);
+            R.Check("после прихода владельца DB-строки восстановились (событийный retry)",
+                restored,
+                restored ? "" : "items=" + inv.GetComponentsByType<ItemComponent>().Count);
+
+            // ── ДИАГНОСТИКА (печатается только если событийный retry не сработал) ──
+            // Разделяет два сценария: (а) retry вообще не был вызван / вызван на другом
+            // инстансе; (б) retry вызывался, но IECSObjectPathContainer не резолвит владельца.
+            if (!restored)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  ┌─ ДИАГНОСТИКА C6 ─────────────────────────────────────────");
+                Console.WriteLine("  │ serializedDB.Count = " + inv.serializedDB.Count);
+                Console.WriteLine("  │ serializedDBNonEO.Count = " + inv.serializedDBNonEO.Count);
+                Console.WriteLine("  │ PendingDeserialization.HasPending = " +
+                                  World.entityManager.PendingDeserialization.HasPending);
+                Console.WriteLine("  │ chestOwnerId = " + _chestOwnerId +
+                                  ", в мире = " + (Ent(_chestOwnerId) != null));
+                Console.WriteLine("  │ inv.ECSWorldOwnerId = " + inv.ECSWorldOwnerId +
+                                  ", резолвится = " + (inv.ECSWorldOwner != null));
+
+                foreach (var kv in inv.serializedDBNonEO)
+                {
+                    var key = kv.Key;
+                    Console.WriteLine("  │ NonEO key: path=[" + string.Join(" > ", key.pathToECSObject) + "]");
+                    Console.WriteLine("  │           serializableInstanceId = " + key.serializableInstanceId);
+                    Console.WriteLine("  │           ECSWorldOwnerId = " + key.ECSWorldOwnerId +
+                                      ", мир резолвится = " + (key.ECSWorldOwner != null));
+                    Console.WriteLine("  │           key.ECSObject != null = " + (key.ECSObject != null));
+                    Console.WriteLine("  │           AlwaysUpdateCache = " + key.AlwaysUpdateCache);
+                    Console.WriteLine("  │           строк = " + kv.Value.Item1.Count + ", попыток = " + kv.Value.Item2);
+                }
+
+                // Ручной ретрай тем же вызовом, что дёргает реестр.
+                Console.WriteLine("  │ → ручной вызов inv.UnserializeDB(true)");
+                try { inv.UnserializeDB(true); }
+                catch (Exception ex) { Console.WriteLine("  │   ИСКЛЮЧЕНИЕ: " + ex); }
+                Thread.Sleep(300);
+
+                int manual = inv.GetComponentsByType<ItemComponent>().Count;
+                Console.WriteLine("  │ items после ручного ретрая = " + manual);
+                Console.WriteLine("  └──────────────────────────────────────────────────────────");
+                Console.WriteLine();
+
+                R.Check("ДИАГНОЗ: ручной UnserializeDB(true) восстановил строки " +
+                        "(⇒ данные и путь целы, не отработал событийный retry)",
+                        manual == 2, "items=" + manual);
+            }
 
             var items = inv.GetComponentsByType<ItemComponent>()
                 .Select(x => (ItemComponent)x.Item1).OrderBy(x => x.ItemName).ToList();
@@ -407,8 +452,11 @@ namespace AECC.TestClient
                 R.Check("у вложенного компонента проставлен ownerDB", ReferenceEquals(inv, items[0].ownerDB));
             }
 
-            R.AwaitCheck("реестр отложенной десериализации опустел",
-                () => !World.entityManager.PendingDeserialization.HasPending, 8000);
+            // ВНИМАНИЕ: PendingDeserialization.HasPending — плохой индикатор: Drain() очищает
+            // словарь ДО запуска попыток, поэтому «пусто» ловится и в момент неудачного слива.
+            // Надёжный признак — что у DB-компонента не осталось припаркованных строк.
+            R.AwaitCheck("припаркованных DB-строк не осталось (serializedDBNonEO пуст)",
+                () => inv.serializedDBNonEO.Count == 0, 8000);
         }
 
         // ─────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -747,6 +747,9 @@ public class FileAdapter
 
         public static void CopyFilesRecursively(DirectoryInfo source, DirectoryInfo target)
         {
+            // P8: целевой каталог мог не существовать — подкаталоги создаются
+            // CreateSubdirectory(), а вот файлы в КОРНЕ падали с DirectoryNotFoundException.
+            if (!target.Exists) target.Create();
             foreach (DirectoryInfo dir in source.GetDirectories())
                 CopyFilesRecursively(dir, target.CreateSubdirectory(dir.Name));
             foreach (FileInfo file in source.GetFiles())

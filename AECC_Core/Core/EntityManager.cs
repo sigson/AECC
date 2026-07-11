@@ -1,4 +1,4 @@
-using AECC.Core.Logging;
+﻿using AECC.Core.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -183,11 +183,16 @@ namespace AECC.Core
             var newParent = deletedEntity.ownerECSObject;
             var children = new List<ECSEntity>();
 
-            if (deletedEntity.childECSObjectsId != null) // ленивое зеркало: null == детей нет
+            // P5: РАНЬШЕ здесь обходился childECSObjectsId — это ЗЕРКАЛО СЕРИАЛИЗАЦИИ,
+            // ленивое и заполняемое только в SnapshotPass. Вне сериализации оно == null,
+            // поэтому дети удаляемой сущности не переподчинялись вообще и оставались
+            // с ownerECSObject на мёртвый объект. Обходим ЖИВОЕ дерево детей.
+            var liveChildren = deletedEntity.ChildrenLiveOrNull;
+            if (liveChildren != null)
             {
-                foreach (var kvp in deletedEntity.childECSObjectsId)
+                foreach (var kvp in liveChildren)
                 {
-                    if (deletedEntity.TryGetChildObject(kvp.Key, out var childObj) && childObj is ECSEntity childEnt)
+                    if (kvp.Value is ECSEntity childEnt)
                     {
                         children.Add(childEnt);
                     }

@@ -265,14 +265,14 @@ namespace AECC.Locking.Benchmark
         {
             GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
             int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
-            long b0 = GC.GetTotalAllocatedBytes(true);
+            long b0 = 0;///////GC.GetTotalAllocatedBytes(true);
             var sw = Stopwatch.StartNew();
             foreach (var t in ws) t.Start();
             Thread.Sleep(durationMs);
             Volatile.Write(ref stop, true);
             foreach (var t in ws) t.Join();
             sw.Stop();
-            long b1 = GC.GetTotalAllocatedBytes(true);
+            long b1 = 0;///////GC.GetTotalAllocatedBytes(true);
             return new Result
             {
                 Ops = opsGetter(),

@@ -295,7 +295,11 @@ namespace AECC.TestServer
                 {
                     if (socket != null)
                     {
-                        ScoreObject so;
+                        // ВНИМАНИЕ: во фреймворке ДВА класса ScoreObject —
+                        //   AECC.Network.ScoreObject (его использует EventManager.MaliciousScoringStorage)
+                        //   AECC.Harness.Services.ScoreObject (в NetworkMaliciousEventCounteractionService)
+                        // Оба namespace здесь в usings ⇒ нужна полная квалификация.
+                        AECC.Network.ScoreObject so;
                         if (NetworkService.instance.EventManager.MaliciousScoringStorage.TryGetValue(socket.Id, out so))
                             Interlocked.Exchange(ref LastMaliciousScore, so.Score);
                     }

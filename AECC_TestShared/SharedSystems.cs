@@ -16,9 +16,17 @@ namespace AECC.TestKit
     /// <summary>
     /// Авторитарная серверная симуляция: интегрирует Position по Velocity каждые 50 мс
     /// и помечает компонент изменённым (⇒ он попадёт в следующий срез роллинга).
-    /// Транзакционность: в MultiThread-режиме контракт исполняется под read-токенами
-    /// Position/Velocity (см. AcquireContractTargets), т.е. компонент не может быть снят
-    /// параллельно во время тела.
+    ///
+    /// ⚠️ ВАЖНЫЙ ИНВАРИАНТ ЯДРА (грабли, на которые легко наступить):
+    /// в MultiThread-режиме контракт исполняет тело, УДЕРЖИВАЯ read-токены на всех компонентах,
+    /// заявленных в EntityComponentPresenceSign как «должен присутствовать»
+    /// (см. ECSExecutableContractContainer.AcquireContractTargets).
+    /// А MarkAsChanged() берёт WRITE-лок на ячейку того же компонента.
+    /// Write под read в том же потоке — cross-mode reentry: RWCell не вешает поток,
+    /// а печатает «HALT! DEADLOCK ESCAPE!» и выполняет операцию БЕЗ ЛОКА (dummy-токен).
+    ///
+    /// ⇒ Компонент, который система МУТИРУЕТ и помечает изменённым, НЕЛЬЗЯ заявлять
+    ///   в presence-sign. Заявляем только Velocity (её читаем), а Position достаём в теле.
     /// </summary>
     public class MovementSystem : ECSExecutableContractContainer
     {
@@ -41,15 +49,16 @@ namespace AECC.TestKit
 
             ContractConditions = new Dictionary<long, List<Func<ECSEntity, bool>>>
             {
-                { 0, new List<Func<ECSEntity, bool>> { (e) => e.Alive } }
+                // Position проверяем условием, а НЕ presence-sign: иначе на ней будет висеть
+                // read-токен, и MarkAsChanged() ниже уйдёт в deadlock-escape.
+                { 0, new List<Func<ECSEntity, bool>> { (e) => e.Alive && e.HasComponent<PositionComponent>() } }
             };
 
             EntityComponentPresenceSign = new Dictionary<long, Dictionary<long, bool>>
             {
                 { 0, new Dictionary<long, bool>
                     {
-                        { TK.Uid<PositionComponent>(), true  },
-                        { TK.Uid<VelocityComponent>(), true  },
+                        { TK.Uid<VelocityComponent>(), true  },   // только читаем ⇒ read-токен безопасен
                     }
                 }
             };
@@ -60,11 +69,15 @@ namespace AECC.TestKit
                 var vel = entity.TryGetComponent<VelocityComponent>();
                 if (pos == null || vel == null) return;
 
-                lock (pos.SerialLocker)
+                double vx, vy;
+                lock (vel.SerialLocker) { vx = vel.VX; vy = vel.VY; }
+
+                // Position под контрактными токенами НЕ висит ⇒ write-лок берётся честно.
+                entity.ExecuteWriteLockedComponent<PositionComponent>((p) =>
                 {
-                    pos.X += vel.VX;
-                    pos.Y += vel.VY;
-                }
+                    p.X += vx;
+                    p.Y += vy;
+                });
                 pos.MarkAsChanged();                 // ⇒ dirty-set ⇒ следующий срез уедет клиенту
                 Interlocked.Increment(ref Ticks);
             };
