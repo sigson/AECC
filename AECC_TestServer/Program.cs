@@ -1,292 +1,187 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading;
 using AECC.Core;
 using AECC.Core.Logging;
-using AECC.Core.Serialization;
-using AECC.ECS.DefaultObjects.ECSComponents;
-using AECC.Extensions;
 using AECC.Harness.Model;
+using AECC.Harness.Serialization;
 using AECC.Harness.Services;
 using AECC.Network;
-using TestShared.Components;
-using TestShared.Systems;
+using AECC.Serialization;
+using AECC.TestKit;
 
-namespace TestServer
+namespace AECC.TestServer
 {
     /// <summary>
-    /// Сервер AECC-фреймворка. Демонстрирует полный цикл:
-    ///   1. IService.RegisterAllServices() — автоматическая регистрация всех сервисов
-    ///   2. Конфигурация (ProgramType, EndpointConfigs, пути)
-    ///   3. IService.InitializeAllServices() — запуск пайплайна инициализации
-    ///   4. OnAllServicesCompleted — создание мира, спавн сущностей, GDAP
-    ///   5. WorldSyncSystem (ECS-система) автоматически работает каждые 100мс
+    /// AECC_TestServer — сервер интеграционного теста.
+    ///
+    ///   ФАЗА A: локальная батарея ядра ECS (EcsCoreSuite) — без сети.
+    ///   ФАЗА B: полный харнесс (сервисы → сеть → БД → авторизация → авторитарный роллинг).
+    ///
+    /// Запуск:  dotnet run --project AECC_TestServer      (первым!)
+    /// Затем:   dotnet run --project AECC_TestClient
+    ///
+    /// Exit code 0 — все проверки (серверные + присланные клиентом) прошли.
     /// </summary>
-    class Program
+    public static class Program
     {
-        private const int SERVER_PORT = 6667;
-        private const int ENTITY_COUNT = 5;
-        private static ECSWorld _serverWorld;
-        private static readonly Random _rng = new Random(123);
+        private static readonly TestReport Report = new TestReport("AECC · SERVER (ФАЗА A: ядро ECS, ФАЗА B: харнесс)");
 
-        static void Main(string[] args)
+        public static int Main(string[] args)
         {
-            Console.WriteLine("╔══════════════════════════════════════════════╗");
-            Console.WriteLine("║     AECC Framework — TEST SERVER            ║");
-            Console.WriteLine("╚══════════════════════════════════════════════╝");
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            int clientTimeoutSec = args.Length > 0 && int.TryParse(args[0], out var t) ? t : 180;
 
-            //Defines.AOTMode = true;
-            Defines.IgnoreNonDangerousExceptions = true;
-            Defines.ServiceSetupLogging = true;
-            Defines.ECSNetworkTypeLogging = true;
+            // ── 0. Ядро ─────────────────────────────────────────────────────
+            // ВАЖНО: режим конкуренции фиксируется в момент конструирования локов,
+            // поэтому флаги выставляются ДО создания любых миров/сущностей.
+            Bootstrapping.ConfigureKernel(multiThread: true);
+            SerializationBootstrap.GetSerializationAdapter = () => new SerializationAdapter();
 
-            // =====================================================
-            //  ШАГ 1: Регистрация всех сервисов (автоматически через рефлексию)
-            // =====================================================
-            Console.WriteLine("\n[1] RegisterAllServices()...");
-            //ECSWorld.GetSerializationAdapter = () => new AECC.Harness.Serialization.SerializationAdapter();///update framework regression
+            PrepareFileSystem();
+
+            // ── ФАЗА A ──────────────────────────────────────────────────────
+            Console.WriteLine();
+            Console.WriteLine("############ ФАЗА A — локальная батарея ядра ECS ############");
+            EcsCoreSuite.Run(Report);
+
+            // ── ФАЗА B ──────────────────────────────────────────────────────
+            Console.WriteLine();
+            Console.WriteLine("############ ФАЗА B — харнесс: сервисы / сеть / БД / авторизация ############");
+
+            // Мир сервера создаём ДО сервисов: AuthService.AuthorizationRealization обязан
+            // вернуть сущность с уже проставленным ECSWorldOwner.
+            // Побочный эффект: конструктор ECSComponentManager перезапишет статик
+            // GlobalProgramComponentGroup на ServerComponentGroup (мы группы всё равно
+            // навешиваем явно — Groups.Server/Groups.Client).
+            var world = Bootstrapping.CreateWorld(TK.WorldId, ECSWorld.WorldTypeEnum.Server, new SerializationAdapter());
+
+            var db = new SqliteDbProvider();
+            bool servicesOk = StartServices(db);
+
+            Report.Section("S0 · сервисы");
+            Report.Check("все IService инициализированы", servicesOk);
+            Report.Check("NetworkService поднял слушателя",
+                NetworkService.instance.Servers != null && NetworkService.instance.Servers.Count >= 1);
+            Report.Check("ConstantService загрузил baseconfig",
+                ConstantService.instance.GetByConfigPath("baseconfig") != null);
+            Report.Check("DBService получил провайдера", DBService.instance.DBProvider != null);
+            Report.Check("DBPath прочитан из конфига", !string.IsNullOrEmpty(DBService.instance.DBPath),
+                "DBPath=" + DBService.instance.DBPath);
+
+            // ECSService подменил ECSWorld.GetWorld на create-on-miss — возвращаем канон.
+            Bootstrapping.RestoreWorldResolver();
+            Report.Check("ECSWorld.GetWorld резолвит наш мир по id",
+                ECSWorld.GetWorld(TK.WorldId) != null && ECSWorld.GetWorld(TK.WorldId).instanceId == TK.WorldId);
+
+            GameServer.Start(world, Report);
+
+            Console.WriteLine();
+            NLogger.LogSuccess("[SERVER] ГОТОВ. Запускайте AECC_TestClient (ждём до " + clientTimeoutSec + " c)");
+            Console.WriteLine();
+
+            bool finished = GameServer.ClientFinished.Wait(TimeSpan.FromSeconds(clientTimeoutSec));
+            if (!finished)
+                Report.Check("клиент завершил сценарий в отведённое время", false,
+                    "таймаут " + clientTimeoutSec + " c — клиент не прислал финальный отчёт");
+
+            Thread.Sleep(300);
+            try { GameServer.Verify(db); }
+            catch (Exception ex) { Report.Check("серверная верификация без исключений", false, ex.ToString()); }
+
+            GameServer.Stop();
+            Report.PrintSummary();
+
+            try { world.Dispose(); } catch { }
+            return Report.Failed == 0 ? 0 : 1;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        private static void PrepareFileSystem()
+        {
+            // GlobalProgramState.GameDataDir == <каталог exe>/GameData
+            var root = AppContext.BaseDirectory;
+            var gameData = Path.Combine(root, "GameData");
+            var gameConfig = Path.Combine(gameData, "GameConfig");
+            var dbDir = Path.Combine(gameData, "Config");
+
+            Directory.CreateDirectory(gameConfig);
+            Directory.CreateDirectory(dbDir);
+
+            // чистый старт: сносим прошлую БД и прошлый зип конфигов
+            TryDelete(Path.Combine(dbDir, "Users.db"));
+            TryDelete(Path.Combine(dbDir, "Users.db-shm"));
+            TryDelete(Path.Combine(dbDir, "Users.db-wal"));
+            TryDelete(Path.Combine(gameData, "zippedconfig.zip"));
+        }
+
+        private static void TryDelete(string p) { try { if (File.Exists(p)) File.Delete(p); } catch { } }
+
+        // ─────────────────────────────────────────────────────────────────────
+        private static bool StartServices(SqliteDbProvider db)
+        {
+            var allDone = new ManualResetEventSlim(false);
+            IService.SyncManager.OnAllServicesCompleted += () => allDone.Set();
+
+            // 1) поднять синглтоны всех IService (рефлексия по загруженным сборкам)
             IService.RegisterAllServices();
 
-            // =====================================================
-            //  ШАГ 2: Конфигурация сервисов ДО InitializeAllServices()
-            //  (сервисы уже зарегистрированы как синглтоны, можно обращаться через .instance)
-            // =====================================================
-            Console.WriteLine("[2] Configuring services...");
-
-            // --- GlobalProgramState ---
+            // 2) сконфигурировать ДО запуска шагов
             GlobalProgramState.instance.ProgramType = GlobalProgramState.ProgramTypeEnum.Server;
-            GlobalProgramState.instance.persistentDataPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ServerData");
-            GlobalProgramState.instance.streamingAssetsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ServerData");
 
-            // Создаём папки для конфигов (ConstantService может к ним обращаться)
-            var dataDir = GlobalProgramState.instance.persistentDataPath;
-            if (!Directory.Exists(dataDir))
-                Directory.CreateDirectory(dataDir);
-            var gameDataDir = Path.Combine(dataDir, "GameData");
-            if (!Directory.Exists(gameDataDir))
-                Directory.CreateDirectory(gameDataDir);
-            var configDir = Path.Combine(gameDataDir, "Config");
-            if (!Directory.Exists(configDir))
-                Directory.CreateDirectory(configDir);
-
-            // --- NetworkService: серверный WebSocket эндпоинт ---
             NetworkService.instance.EndpointConfigs.Add(new NetworkDestination
             {
-                Host = "0.0.0.0",
-                Port = SERVER_PORT,
+                Host = TK.Host,
+                Port = TK.Port,
                 Protocol = NetworkProtocol.TCP,
                 IsListener = true,
-                BufferSize = 65536
+                BufferSize = 65536,
             });
 
-            Console.WriteLine($"   ProgramType: Server");
-            Console.WriteLine($"   WebSocket listener: 0.0.0.0:{SERVER_PORT}");
+            // SQLiteDefaultDBProvider вырезан препроцессором в netstandard2.0-сборке фреймворка
+            // (см. FRAMEWORK_MAP §10.3) ⇒ подставляем свой провайдер.
+            DBService.instance.DBProvider = db;
 
-            // =====================================================
-            //  ШАГ 3: Подписка на завершение инициализации всех сервисов
-            // =====================================================
-            IService.SyncManager.OnAllServicesCompleted += () =>
-            {
-                Console.WriteLine("\n[✓] All services initialized successfully!");
-                OnAllServicesReady();
-            };
+            // 3) ПРЕД-ЗАСЕВ КОНФИГА.
+            // DBService.InitializeProcess читает ConstantService.GetByConfigPath("baseconfig")
+            // безусловно, а сервисы стартуют параллельно ⇒ без предзасева возможен NRE
+            // (гонка порядка шагов). SetupConfigs(path) создаёт baseconfig.json из
+            // GlobalProgramState.BaseConfigDefault и наполняет ConstantDB, не помечая Loaded.
+            ConstantService.instance.SetupConfigs(GlobalProgramState.instance.GameConfigDir);
+            PatchBaseConfigPort();
 
-            // =====================================================
-            //  ШАГ 4: Запуск пайплайна инициализации
-            // =====================================================
-            Console.WriteLine("\n[3] InitializeAllServices()...");
+            // 4) погнали
             IService.InitializeAllServices();
 
-            // =====================================================
-            //  ШАГ 5: Основной цикл
-            // =====================================================
-            Console.WriteLine("[4] Server main loop. Press 'q' to quit, 's' for status.\n");
-
-            var running = true;
-            var statusTimer = new Timer(_ =>
-            {
-                if (!running || _serverWorld == null) return;
-                PrintWorldStatus();
-            }, null, 5000, 5000);
-
-            while (running)
-            {
-                // if (Console.KeyAvailable)
-                // {
-                //     var key = Console.ReadKey(true).KeyChar;
-                //     if (key == 'q' || key == 'Q')
-                //         running = false;
-                //     else if (key == 's' || key == 'S')
-                //         PrintWorldStatus();
-                // }
-                Thread.Sleep(100);
-            }
-
-            statusTimer.Dispose();
-            Console.WriteLine("\nServer shutting down...");
+            bool ok = allDone.Wait(TimeSpan.FromSeconds(60));
+            if (!ok) NLogger.Error("[SERVER] сервисы не завершили инициализацию за 60 c");
+            return ok;
         }
 
         /// <summary>
-        /// Вызывается из OnAllServicesCompleted.
-        /// ECSService, NetworkService — уже проинициализированы и работают.
+        /// В BaseConfigDefault зашит порт 6666; тест слушает TK.Port. Приводим конфиг в
+        /// соответствие, чтобы клиент, читающий baseconfig, видел тот же порт.
         /// </summary>
-        static void OnAllServicesReady()
+        private static void PatchBaseConfigPort()
         {
-            // =====================================================
-            //  Создание серверного ECS-мира
-            // =====================================================
-            Console.WriteLine("\n  [World] Creating server ECS world...");
-
-            _serverWorld = ECSService.instance.GetWorld();
-            _serverWorld.WorldType = ECSWorld.WorldTypeEnum.Server;
-            _serverWorld.WorldMetaData = "TestServerWorld";
-
-            Console.WriteLine($"  [World] ID: {_serverWorld.instanceId}");
-            Console.WriteLine($"  [World] Type: {_serverWorld.WorldType}");
-
-            // =====================================================
-            //  Спавн игровых сущностей со случайными компонентами
-            // =====================================================
-            Console.WriteLine($"\n  [Entities] Spawning {ENTITY_COUNT} game entities...");
-
-            for (int i = 0; i < ENTITY_COUNT; i++)
+            try
             {
-                var entity = CreateGameEntity(i);
-                var compNames = string.Join(", ", entity.entityComponents.Components.Select(c => c.GetType().Name));
-                Console.WriteLine($"    Entity #{i}: {entity.AliasName} (ID={entity.instanceId})");
-                Console.WriteLine($"      Components: [{compNames}]");
-                Console.WriteLine($"      GDAP policies: {entity.dataAccessPolicies.Count}");
+                var file = Path.Combine(GlobalProgramState.instance.GameConfigDir, "baseconfig.json");
+                if (!File.Exists(file)) return;
+                var json = File.ReadAllText(file);
+                var obj = Newtonsoft.Json.Linq.JObject.Parse(json);
+                obj["Networking"]["Port"] = TK.Port.ToString();
+                obj["Networking"]["HostAddress"] = TK.Host;
+                File.WriteAllText(file, obj.ToString());
+
+                // перечитать в ConstantDB (SetupConfigs перезаписывает записи по тому же пути)
+                ConstantService.instance.SetupConfigs(GlobalProgramState.instance.GameConfigDir);
             }
-
-            // =====================================================
-            //  Обработка подключений клиентов
-            // =====================================================
-            NetworkService.instance.OnSocketReady += (socket) =>
+            catch (Exception ex)
             {
-                Console.WriteLine($"\n  >>> CLIENT CONNECTED: Socket={socket.Id}, Addr={socket.Address}");
-                var clientEntity = CreateClientEntity(socket);
-                Console.WriteLine($"  >>> Client entity created: {clientEntity.AliasName} (ID={clientEntity.instanceId})");
-                Console.WriteLine($"  >>> WorldSyncSystem will now send GDAP-filtered data to this client");
-            };
-
-            NetworkService.instance.OnSocketDisconnected += (socket) =>
-            {
-                Console.WriteLine($"\n  <<< CLIENT DISCONNECTED: Socket={socket.Id}");
-            };
-
-            Console.WriteLine("\n  [Ready] Server is fully operational. Waiting for client connections...");
-        }
-
-        // =====================================================
-        //  Создание игровой сущности
-        // =====================================================
-        static ECSEntity CreateGameEntity(int index)
-        {
-            var entity = new ECSEntity();
-            entity.AliasName = $"GameEntity_{index}";
-            entity.Alive = true;
-
-            _serverWorld.entityManager.AddNewEntity(entity, silent: true);
-
-            // Обязательные компоненты
-            entity.AddComponentSilent(new HealthComponent
-            {
-                CurrentHealth = 80f + (float)(_rng.NextDouble() * 40f),
-                MaxHealth = 100f + (float)(_rng.NextDouble() * 50f)
-            });
-
-            entity.AddComponentSilent(new PositionComponent
-            {
-                X = (float)(_rng.NextDouble() * 100.0 - 50.0),
-                Y = (float)(_rng.NextDouble() * 10.0),
-                Z = (float)(_rng.NextDouble() * 100.0 - 50.0)
-            });
-
-            // Случайные компоненты
-            if (_rng.NextDouble() > 0.3)
-            {
-                entity.AddComponentSilent(new VelocityComponent
-                {
-                    VX = (float)(_rng.NextDouble() * 10.0 - 5.0),
-                    VY = 0f,
-                    VZ = (float)(_rng.NextDouble() * 10.0 - 5.0)
-                });
+                NLogger.Error("[SERVER] не удалось поправить baseconfig: " + ex.Message);
             }
-
-            if (_rng.NextDouble() > 0.5)
-            {
-                entity.AddComponentSilent(new ScoreComponent
-                {
-                    Points = _rng.Next(0, 1000),
-                    KillCount = _rng.Next(0, 20)
-                });
-            }
-
-            // Серверный секретный компонент — НЕ виден клиенту через GDAP
-            entity.AddComponentSilent(new ServerSecretComponent
-            {
-                InternalState = $"secret_data_{index}",
-                LastTickProcessed = DateTime.UtcNow.Ticks
-            });
-
-            // GDAP: определяет видимость компонентов для клиентов
-            entity.dataAccessPolicies.Add(TestGDAP.CreateForPlayer());
-
-            entity.entityComponents.RegisterAllComponents();
-            _serverWorld.entityManager.AddNewEntityReaction(entity);
-
-            return entity;
-        }
-
-        // =====================================================
-        //  Создание клиентской сущности с SocketComponent
-        // =====================================================
-        static ECSEntity CreateClientEntity(ISocketAdapter socket)
-        {
-            var clientEntity = new ECSEntity();
-            clientEntity.AliasName = $"Client_{socket.Id}";
-            clientEntity.Alive = true;
-
-            _serverWorld.entityManager.AddNewEntity(clientEntity, silent: true);
-
-            var socketComp = new SocketComponent();
-            socketComp.Socket = socket;
-            clientEntity.AddComponentSilent(socketComp);
-
-            clientEntity.dataAccessPolicies.Add(TestGDAP.CreateForPlayer());
-
-            clientEntity.entityComponents.RegisterAllComponents();
-            _serverWorld.entityManager.AddNewEntityReaction(clientEntity);
-
-            return clientEntity;
-        }
-
-        // =====================================================
-        //  Статус мира
-        // =====================================================
-        static void PrintWorldStatus()
-        {
-            if (_serverWorld == null) return;
-
-            Console.WriteLine("─────────────────────────────────────────────");
-            Console.WriteLine($"[STATUS] {_serverWorld.WorldMetaData} | Entities: {_serverWorld.entityManager.EntityStorage.Count}");
-
-            foreach (var kvp in _serverWorld.entityManager.EntityStorage)
-            {
-                var e = kvp.Value;
-                var compList = string.Join(", ", e.entityComponents.Components.Select(c => c.GetType().Name));
-                Console.Write($"  {e.AliasName}: [{compList}]");
-
-                if (e.HasComponent<HealthComponent>())
-                    Console.Write($" HP={e.GetComponent<HealthComponent>().CurrentHealth:F1}");
-                if (e.HasComponent<PositionComponent>())
-                {
-                    var p = e.GetComponent<PositionComponent>();
-                    Console.Write($" Pos=({p.X:F1},{p.Y:F1},{p.Z:F1})");
-                }
-                if (e.HasComponent<ScoreComponent>())
-                    Console.Write($" Pts={e.GetComponent<ScoreComponent>().Points}");
-
-                Console.WriteLine();
-            }
-            Console.WriteLine("─────────────────────────────────────────────");
         }
     }
 }

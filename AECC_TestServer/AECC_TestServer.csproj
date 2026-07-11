@@ -1,38 +1,39 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>AECC.TestServer</RootNamespace>
+    <AssemblyName>AECC_TestServer</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- контракты/типы поднимаются рефлексией по загруженным сборкам -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
+
+  <!--
+    Общий код линкуется В ОБА проекта (сервер и клиент) из ../AECC_TestShared.
+    Это не «третий проект», а общий исходник: NetSerializer вычисляет id типа на проводе
+    как CRC32(Type.ToString()) с вырезанными namespace'ами корневых типов, поэтому имена
+    типов и namespace на обеих сторонах обязаны совпадать буквально.
+  -->
   <ItemGroup>
-    <PackageReference Include="MessagePack" Version="3.1.4" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="StreamJsonRpc" Version="2.24.84" />
-    <PackageReference Include="System.IO.Pipelines" Version="10.0.5" />
-    <PackageReference Include="DefaultEcs" Version="0.17.2" />
-    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.3" />
-    <PackageReference Include="Microsoft.VisualStudio.Threading" Version="17.14.15" />
-    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
-    <PackageReference Include="NetCoreServer" Version="8.0.7" />
+    <Compile Include="..\AECC_TestShared\**\*.cs" LinkBase="Shared" />
   </ItemGroup>
 
-  <!-- Reference the AECC framework projects.
-       Adjust relative paths to match your solution layout, e.g.:
-         AECCTest/
-           TestShared/
-           TestServer/
-           TestClient/
-         AECC_Core/
-         AECC_CoreFramework/
-         AECC_Framework/
-         AECC_Packages/
-  -->
   <ItemGroup>
     <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
     <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
     <ProjectReference Include="..\AECC_Framework\AECC_Framework.csproj" />
+    <ProjectReference Include="..\AECC_Packages\AECC_Packages.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- SQLiteDefaultDBProvider во фреймворке вырезан препроцессором (#if NET) при сборке
+         под netstandard2.0, поэтому провайдер поставляем свой (см. SqliteDbProvider.cs). -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+  </ItemGroup>
+
 </Project>
