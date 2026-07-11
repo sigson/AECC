@@ -171,13 +171,16 @@ namespace AECC.Core
             }
             // P7: мир мог не доехать до вложенного компонента (восстановление из сети,
             // ручная сборка DB) — резолвим через владельцев и не падаем на null.
-            var dbWorldD = this.ECSWorldOwner
-                           ?? (ownerEntity != null ? ownerEntity.ECSWorldOwner : null)
-                           ?? (ownerDB != null ? ownerDB.ECSWorldOwner : null);
-            if(ownerDB != null && dbWorldD != null && dbWorldD.Profile.DbAuthoritativeChangeMarking)
+            // Резолв — строго под ownerDB != null: MarkAsChanged/DirectiveSetChanged —
+            // горячий путь ВСЕХ компонентов, обычным (не-DB) мир здесь не нужен.
+            if (ownerDB != null)
             {
-                ownerDB.ChangeComponent(this);
-                ownerDB.DirectiveSetChanged();
+                var dbWorld = ResolveDbMarkingWorld();
+                if (dbWorld != null && dbWorld.Profile.DbAuthoritativeChangeMarking)
+                {
+                    ownerDB.ChangeComponent(this);
+                    ownerDB.DirectiveSetChanged();
+                }
             }
         }
 
@@ -188,14 +191,34 @@ namespace AECC.Core
                 ownerEntity.entityComponents.MarkComponentChanged(this, serializationSilent, eventSilent);
             }
             // P7: см. DirectiveSetChanged.
-            var dbWorldM = this.ECSWorldOwner
-                           ?? (ownerEntity != null ? ownerEntity.ECSWorldOwner : null)
-                           ?? (ownerDB != null ? ownerDB.ECSWorldOwner : null);
-            if(ownerDB != null && dbWorldM != null && dbWorldM.Profile.DbAuthoritativeChangeMarking)
+            if (ownerDB != null)
             {
-                ownerDB.ChangeComponent(this);
-                ownerDB.DirectiveSetChanged();
+                var dbWorld = ResolveDbMarkingWorld();
+                if (dbWorld != null && dbWorld.Profile.DbAuthoritativeChangeMarking)
+                {
+                    ownerDB.ChangeComponent(this);
+                    ownerDB.DirectiveSetChanged();
+                }
             }
+        }
+
+        /// <summary>P7: мир для авторитарной DB-пометки вложенного компонента.
+        /// ECSWorldOwnerId == 0 — легальное состояние (сборка DB до прикрепления к миру),
+        /// поэтому геттер ECSWorldOwner на нулевом id не дёргаем: он репортит ошибку при
+        /// включённой диагностике, а GetWorld на промахе способен создать fallback-мир.
+        /// Мир, найденный через владельцев, записываем обратно — самолечение: дальше резолв
+        /// идёт напрямую, и P7-проброс в DBComponent.AddComponent увидит у детей этого
+        /// компонента уже ненулевой мир.</summary>
+        private ECSWorld ResolveDbMarkingWorld()
+        {
+            var world = this.ECSWorldOwnerId != 0 ? this.ECSWorldOwner : null;
+            if (world == null && ownerEntity != null && ownerEntity.ECSWorldOwnerId != 0)
+                world = ownerEntity.ECSWorldOwner;
+            if (world == null && ownerDB != null && ownerDB.ECSWorldOwnerId != 0)
+                world = ownerDB.ECSWorldOwner;
+            if (world != null && this.ECSWorldOwnerId == 0)
+                this.ECSWorldOwner = world;
+            return world;
         }
 
         public ECSComponent SetGlobalComponentGroup()

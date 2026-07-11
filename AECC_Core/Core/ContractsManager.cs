@@ -279,16 +279,11 @@ namespace AECC.Core
 
         public void OnEntityDestroyed(ECSEntity entity)
         {
-            bool cleared = false;
             foreach (KeyValuePair<ECSExecutableContractContainer, DictionaryWrapper<long, int>> pair in this.TimeDependContractEntityDatabase)
             {
-                int nulled = 0;
                 DictionaryWrapper<long, int> bufDict;
                 if(TimeDependContractEntityDatabase.TryGetValue(pair.Key, out bufDict))
-                    if(pair.Value.Remove(entity.instanceId, out nulled))
-                    {
-                        cleared = true;
-                    }
+                    pair.Value.Remove(entity.instanceId, out _);
             }
             if(this.AwaitingContractDatabase.TryGetValue(entity.instanceId, out var contracts))
             {

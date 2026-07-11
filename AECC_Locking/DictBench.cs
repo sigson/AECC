@@ -25,6 +25,19 @@ namespace AECC.Locking.Benchmark
     {
         private static readonly object Payload = new object();
 
+        // netstandard2.0 не видит GC.GetTotalAllocatedBytes на этапе компиляции, но на
+        // современных рантаймах (.NET Core 3.0+/.NET 5+) метод есть — резолвим рефлексией
+        // один раз. На рантаймах без него честно возвращаем 0 (колонка аллокаций нулевая,
+        // как у прежней заглушки), а на новых замер снова работает.
+        private static readonly Func<bool, long> TotalAllocatedBytes = ResolveTotalAllocatedBytes();
+
+        private static Func<bool, long> ResolveTotalAllocatedBytes()
+        {
+            var m = typeof(GC).GetMethod("GetTotalAllocatedBytes", new[] { typeof(bool) });
+            if (m == null) return _ => 0L;
+            return (Func<bool, long>)Delegate.CreateDelegate(typeof(Func<bool, long>), m);
+        }
+
         // ───────────────────────── legacy faithful model ─────────────────────────
         private sealed class LegacyDict
         {
@@ -265,14 +278,14 @@ namespace AECC.Locking.Benchmark
         {
             GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
             int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
-            long b0 = 0;///////GC.GetTotalAllocatedBytes(true);
+            long b0 = TotalAllocatedBytes(true);
             var sw = Stopwatch.StartNew();
             foreach (var t in ws) t.Start();
             Thread.Sleep(durationMs);
             Volatile.Write(ref stop, true);
             foreach (var t in ws) t.Join();
             sw.Stop();
-            long b1 = 0;///////GC.GetTotalAllocatedBytes(true);
+            long b1 = TotalAllocatedBytes(true);
             return new Result
             {
                 Ops = opsGetter(),

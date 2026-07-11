@@ -402,6 +402,13 @@ namespace AECC.Core.BuiltInTypes.Components
                                 unserComp.ownerEntity = eCSComponent.ownerEntity;
                             }
                             unserComp.ownerDB = owner;
+                            // P7: как в AddComponent/AddOrChangeComponent — строка могла быть
+                            // сериализована сервером до прикрепления его DB к миру (id == 0 на
+                            // проводе); без штамповки клиентский MarkAsChanged у такой строки
+                            // остаётся без мира. Ненулевой wire-id не трогаем: id мира — общая
+                            // клиент-серверная константа и резолвится в локальный мир.
+                            if (unserComp.ECSWorldOwnerId == 0)
+                                unserComp.ECSWorldOwnerId = owner.ECSWorldOwnerId;
                             if (!components.ContainsKey(unserComp.instanceId))
                             {
                                 components[unserComp.instanceId] = (unserComp, component.componentState);

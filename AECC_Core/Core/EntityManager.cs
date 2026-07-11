@@ -181,25 +181,41 @@ namespace AECC.Core
         private void ReparentChildrenUpwards(ECSEntity deletedEntity)
         {
             var newParent = deletedEntity.ownerECSObject;
+            // Предок-сущность мог быть удалён раньше (или удаляется сейчас и уже изъят из
+            // репозитория): прививать детей к нему нельзя — его собственное переподчинение
+            // их уже не увидит, и они осиротеют на мёртвом объекте. Поднимаемся до живого
+            // предка; не-сущности считаем живыми (их жизненный цикл не наш). Ограничитель —
+            // по образцу ResolveRedirect (защита от цикла в цепочке владельцев).
+            int climbGuard = 0;
+            while (newParent is ECSEntity parentEnt
+                   && !_entities.Contains(parentEnt.instanceId)
+                   && climbGuard++ < 100)
+            {
+                newParent = parentEnt.ownerECSObject;
+            }
+
             var children = new List<ECSEntity>();
 
             // P5: РАНЬШЕ здесь обходился childECSObjectsId — это ЗЕРКАЛО СЕРИАЛИЗАЦИИ,
             // ленивое и заполняемое только в SnapshotPass. Вне сериализации оно == null,
             // поэтому дети удаляемой сущности не переподчинялись вообще и оставались
             // с ownerECSObject на мёртвый объект. Обходим ЖИВОЕ дерево детей.
+            // Детей, уже изъятых из репозитория, НЕ переподчиняем: прививка мёртвой
+            // сущности к живому предку вернула бы её в его зеркало сериализации, и клиент
+            // вечно резолвил бы мёртвый id.
             var liveChildren = deletedEntity.ChildrenLiveOrNull;
             if (liveChildren != null)
             {
                 foreach (var kvp in liveChildren)
                 {
-                    if (kvp.Value is ECSEntity childEnt)
+                    if (kvp.Value is ECSEntity childEnt && _entities.Contains(childEnt.instanceId))
                     {
                         children.Add(childEnt);
                     }
                 }
             }
 
-            // Т.к. дети уже числятся в _nodeDescendants у бабушек/дедушек, 
+            // Т.к. дети уже числятся в _nodeDescendants у бабушек/дедушек,
             // топологию перестраивать не нужно. Нужно только поменять ownerECSObject.
             foreach (var child in children)
             {
@@ -211,6 +227,23 @@ namespace AECC.Core
                 else
                 {
                     child.ownerECSObject = null;
+                }
+            }
+
+            // Симметрия удаления: сущность обязана исчезнуть и из ЖИВОГО дерева СВОЕГО
+            // родителя (RemoveChildObject больше никто за нас не вызывает). Иначе мёртвый
+            // объект остаётся в child-словаре родителя, попадает в его зеркало
+            // childECSObjectsId при следующем SnapshotPass (клиент бесконечно ждёт мёртвый
+            // id, cap 30 → «client: error deserialize»), а при последующем удалении
+            // родителя этот же код привил бы «зомби» к деду. RemoveChildObject помечает
+            // родителя Changed — следующий срез донесёт исчезновение ребёнка до клиента.
+            var directParent = deletedEntity.ownerECSObject;
+            if (directParent != null)
+            {
+                var siblings = directParent.ChildrenLiveOrNull;
+                if (siblings != null && siblings.ContainsKey(deletedEntity.instanceId))
+                {
+                    directParent.RemoveChildObject(deletedEntity.instanceId, false);
                 }
             }
         }
