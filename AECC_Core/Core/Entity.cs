@@ -23,10 +23,12 @@ namespace AECC.Core
         [System.NonSerialized]
         public ECSEntityManager manager;
         [System.NonSerialized]
+        [IgnoreDataMember] // P1: иначе после десериализации entityComponents == null
         public EntityComponentStorage entityComponents;
         
         public Dictionary<long, int> fastEntityComponentsId;//todo: concurrent replace to normal
         [System.NonSerialized]
+        [IgnoreDataMember] // P1: иначе NRE в ECSEntity.OnDelete()
         public SynchronizedList<GroupDataAccessPolicy> dataAccessPolicies;
         [System.NonSerialized]
         public string Name;

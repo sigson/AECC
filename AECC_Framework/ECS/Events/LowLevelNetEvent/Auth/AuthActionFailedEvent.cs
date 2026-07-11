@@ -15,6 +15,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [LowLevelNetworkEvent]
     [NetworkScore(0)]
     [System.Serializable]
+    [MessagePackObject] // P2
     [TypeUid(26)]
     public class AuthActionFailedEvent : NetworkEvent
     {

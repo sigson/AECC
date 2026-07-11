@@ -11,6 +11,7 @@ using System.Linq;
 using System.IO;
 using System.Threading.Tasks;
 using System.Timers;
+using System.Runtime.Serialization; // P1
 using AECC.Extensions.ThreadingSync;
 
 namespace AECC.Core.BuiltInTypes.Components
@@ -21,6 +22,7 @@ namespace AECC.Core.BuiltInTypes.Components
     {
         static public new long Id { get; set; } = 10;
         [System.NonSerialized]
+        [IgnoreDataMember] // P1: иначе таймер пришедшего компонента == null
         public TimerEx componentTimer = new TimerEx();
         public double timerAwait = 0;
 

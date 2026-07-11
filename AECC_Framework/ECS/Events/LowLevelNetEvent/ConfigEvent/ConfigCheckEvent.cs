@@ -14,6 +14,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.ConfigEvent
     [LowLevelNetworkEvent]
     [NetworkScore(100)]
     [System.Serializable]
+    [MessagePackObject] // P2
     [TypeUid(19)]
     public class ConfigCheckEvent : NetworkEvent
     {

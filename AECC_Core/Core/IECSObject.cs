@@ -24,6 +24,7 @@ namespace AECC.Core
         static public new long Id { get; set; } = 0;
 
         [System.NonSerialized]
+        [IgnoreDataMember] // P1: без этого MakeReverseShallowCopy не переинициализирует локер
         public object SerialLocker = new object();
 
         /// <summary>Opaque-слот пер-объектной сериализационной тени — модель ХРАНИТ, не

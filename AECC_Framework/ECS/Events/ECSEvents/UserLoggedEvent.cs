@@ -15,6 +15,7 @@ namespace AECC.ECS.DefaultObjects.Events.ECSEvents
     [LowLevelNetworkEvent]
     [NetworkScore(0)]
     [System.Serializable]
+    [MessagePackObject] // P2
     [TypeUid(25)]
     public class UserLoggedEvent : NetworkEvent
     {

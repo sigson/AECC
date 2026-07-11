@@ -14,6 +14,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [LowLevelNetworkEvent]
     [NetworkScore(400)]
     [System.Serializable]
+    [MessagePackObject] // P2
     [TypeUid(22)]
     public class ClientRegistrationEvent : NetworkEvent
     {

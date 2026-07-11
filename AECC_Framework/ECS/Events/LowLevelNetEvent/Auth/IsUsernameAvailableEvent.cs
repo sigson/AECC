@@ -14,6 +14,7 @@ namespace AECC.ECS.DefaultObjects.Events.LowLevelNetEvent.Auth
     [LowLevelNetworkEvent]
     [NetworkScore(0)]
     [System.Serializable]
+    [MessagePackObject] // P2
     [TypeUid(27)]
     public class IsUsernameAvailableEvent : NetworkEvent
     {
