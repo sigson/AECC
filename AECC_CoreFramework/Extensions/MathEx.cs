@@ -1,6 +1,5 @@
 using System;
 using System.Numerics;
-using AECC.ECS.Types.AtomicType;
 
 namespace AECC.Extensions
 {
@@ -52,30 +51,30 @@ namespace AECC.Extensions
 
         }
 
-        public static Vector3S ToEulerAngles(Quaternion q)
+        public static Vector3 ToEulerAngles(Quaternion q)
         {
-            Vector3S angles = new Vector3S();
+            Vector3 angles = new Vector3();
 
             // roll / x
             double sinr_cosp = 2 * (q.W * q.X + q.Y * q.Z);
             double cosr_cosp = 1 - 2 * (q.X * q.X + q.Y * q.Y);
-            angles.x = (float)Math.Atan2(sinr_cosp, cosr_cosp);
+            angles.X = (float)Math.Atan2(sinr_cosp, cosr_cosp);
 
             // pitch / y
             double sinp = 2 * (q.W * q.Y - q.Z * q.X);
             if (Math.Abs(sinp) >= 1)
             {
-                angles.y = (float)MathEx.CopySign(Math.PI / 2, sinp);
+                angles.Y = (float)MathEx.CopySign(Math.PI / 2, sinp);
             }
             else
             {
-                angles.y = (float)Math.Asin(sinp);
+                angles.Y = (float)Math.Asin(sinp);
             }
 
             // yaw / z
             double siny_cosp = 2 * (q.W * q.Z + q.X * q.Y);
             double cosy_cosp = 1 - 2 * (q.Y * q.Y + q.Z * q.Z);
-            angles.z = (float)Math.Atan2(siny_cosp, cosy_cosp);
+            angles.Z = (float)Math.Atan2(siny_cosp, cosy_cosp);
 
             return angles;
         }
