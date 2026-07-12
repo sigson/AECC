@@ -86,7 +86,8 @@ namespace AECC.LoadClient
             clientCount = Math.Min(clientCount, LK.MulticlientCapacity);
             for (int i = 0; i < clientCount; i++)
             {
-                var vc = new VirtualClient(i, prefix + "_" + i);
+                // ClientAuthEvent.CheckPacket на сервере допускает только буквы/цифры в имени.
+                var vc = new VirtualClient(i, prefix + "vc" + i);
                 Clients.Add(vc);
                 ByName[vc.Name] = vc;
             }

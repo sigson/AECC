@@ -80,6 +80,11 @@ namespace AECC.Network
             if (evt.IsNetworkBound)
             {
                 // Network-bound: serialize and send. Do NOT call Execute().
+                if (_networkingInstance == null)
+                {
+                    NLogger.LogError($"EventManager is not initialized yet (NetworkingInstance.Start() not completed); dropping network-bound event {evt.GetType().Name}.");
+                    return;
+                }
                 _networkingInstance.SendEvent(evt);
             }
             else

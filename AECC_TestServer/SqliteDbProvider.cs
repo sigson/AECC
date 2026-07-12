@@ -102,75 +102,90 @@ CREATE TABLE IF NOT EXISTS ""Users"" (
 
         public override bool UsernameAvailable(string username)
         {
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "SELECT id FROM Users WHERE Username = @u COLLATE NOCASE;";
-                cmd.Parameters.AddWithValue("@u", username ?? "");
-                using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
-                    return !rd.HasRows;
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT id FROM Users WHERE Username = @u COLLATE NOCASE;";
+                    cmd.Parameters.AddWithValue("@u", username ?? "");
+                    using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
+                        return !rd.HasRows;
+                }
             }
         }
 
         public override bool EmailAvailable(string email)
         {
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "SELECT id FROM Users WHERE Email = @e;";
-                cmd.Parameters.AddWithValue("@e", email ?? "");
-                using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
-                    return !rd.HasRows;
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT id FROM Users WHERE Email = @e;";
+                    cmd.Parameters.AddWithValue("@e", email ?? "");
+                    using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
+                        return !rd.HasRows;
+                }
             }
         }
 
         public override bool LoginCheck(string username, string hashedPassword)
         {
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "SELECT id FROM Users WHERE Username = @u COLLATE NOCASE AND Password = @p;";
-                cmd.Parameters.AddWithValue("@u", username ?? "");
-                cmd.Parameters.AddWithValue("@p", hashedPassword ?? "");
-                using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
-                    return rd.HasRows;
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT id FROM Users WHERE Username = @u COLLATE NOCASE AND Password = @p;";
+                    cmd.Parameters.AddWithValue("@u", username ?? "");
+                    cmd.Parameters.AddWithValue("@p", hashedPassword ?? "");
+                    using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
+                        return rd.HasRows;
+                }
             }
         }
 
         public override T CreateUser<T>(T dataRow)
         {
-            if (!EmailAvailable(dataRow.Email)) throw new ArgumentException("Email Taken!");
-            if (!UsernameAvailable(dataRow.Username)) throw new ArgumentException("Username Taken!");
-
-            var packed = dataRow.PrepareToDBInsert();
-            var columns = string.Join(", ", packed.Item1);
-            var paramNames = string.Join(", ", packed.Item1.Select(c => "@" + c));
-
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "INSERT INTO Users(" + columns + ") VALUES(" + paramNames + ");";
-                for (int i = 0; i < packed.Item1.Count; i++)
-                    cmd.Parameters.AddWithValue("@" + packed.Item1[i], (object)packed.Item2[i] ?? DBNull.Value);
-                cmd.ExecuteNonQuery();
+                if (!EmailAvailable(dataRow.Email)) throw new ArgumentException("Email Taken!");
+                if (!UsernameAvailable(dataRow.Username)) throw new ArgumentException("Username Taken!");
+
+                var packed = dataRow.PrepareToDBInsert();
+                var columns = string.Join(", ", packed.Item1);
+                var paramNames = string.Join(", ", packed.Item1.Select(c => "@" + c));
+
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "INSERT INTO Users(" + columns + ") VALUES(" + paramNames + ");";
+                    for (int i = 0; i < packed.Item1.Count; i++)
+                        cmd.Parameters.AddWithValue("@" + packed.Item1[i], (object)packed.Item2[i] ?? DBNull.Value);
+                    cmd.ExecuteNonQuery();
+                }
+                return GetUserViaCallsign<T>(dataRow.Username);
             }
-            return GetUserViaCallsign<T>(dataRow.Username);
         }
 
         public override T CreateOrUpdateUser<T>(T dataRow)
         {
-            var existing = GetUserViaCallsign<T>(dataRow.Username);
-            if (existing == null) return CreateUser(dataRow);
-
-            var packed = dataRow.PrepareToDBInsert();
-            var sets = packed.Item1
-                .Where(c => !c.Equals("Username", StringComparison.OrdinalIgnoreCase))
-                .Select(c => c + " = @" + c);
-
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "UPDATE Users SET " + string.Join(", ", sets) + " WHERE Username = @Username;";
-                for (int i = 0; i < packed.Item1.Count; i++)
-                    cmd.Parameters.AddWithValue("@" + packed.Item1[i], (object)packed.Item2[i] ?? DBNull.Value);
-                cmd.ExecuteNonQuery();
+                var existing = GetUserViaCallsign<T>(dataRow.Username);
+                if (existing == null) return CreateUser(dataRow);
+
+                var packed = dataRow.PrepareToDBInsert();
+                var sets = packed.Item1
+                    .Where(c => !c.Equals("Username", StringComparison.OrdinalIgnoreCase))
+                    .Select(c => c + " = @" + c);
+
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "UPDATE Users SET " + string.Join(", ", sets) + " WHERE Username = @Username;";
+                    for (int i = 0; i < packed.Item1.Count; i++)
+                        cmd.Parameters.AddWithValue("@" + packed.Item1[i], (object)packed.Item2[i] ?? DBNull.Value);
+                    cmd.ExecuteNonQuery();
+                }
+                return GetUserViaCallsign<T>(dataRow.Username);
             }
-            return GetUserViaCallsign<T>(dataRow.Username);
         }
 
         public override T GetUserViaCallsign<T>(string username)
@@ -185,17 +200,20 @@ CREATE TABLE IF NOT EXISTS ""Users"" (
 
         private T QueryOne<T>(string sql, string value) where T : UserDataRowBase
         {
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = sql;
-                cmd.Parameters.AddWithValue("@v", value ?? "");
-                using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
+                using (var cmd = Conn.CreateCommand())
                 {
-                    if (!rd.HasRows) return default(T);
-                    rd.Read();
-                    var row = Activator.CreateInstance<T>();
-                    Unpack(row, rd);
-                    return row;
+                    cmd.CommandText = sql;
+                    cmd.Parameters.AddWithValue("@v", value ?? "");
+                    using (var rd = cmd.ExecuteReader(CommandBehavior.SingleRow))
+                    {
+                        if (!rd.HasRows) return default(T);
+                        rd.Read();
+                        var row = Activator.CreateInstance<T>();
+                        Unpack(row, rd);
+                        return row;
+                    }
                 }
             }
         }
@@ -234,23 +252,29 @@ CREATE TABLE IF NOT EXISTS ""Users"" (
 
         public override List<string> GetEmailList()
         {
-            var result = new List<string>();
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "SELECT Email FROM Users WHERE Email <> '' AND EmailVerified <> 0;";
-                using (var rd = cmd.ExecuteReader())
-                    while (rd.Read()) result.Add(Str(rd["Email"]));
+                var result = new List<string>();
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT Email FROM Users WHERE Email <> '' AND EmailVerified <> 0;";
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read()) result.Add(Str(rd["Email"]));
+                }
+                return result;
             }
-            return result;
         }
 
         private bool Exec(string sql, params (string, object)[] ps)
         {
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = sql;
-                foreach (var p in ps) cmd.Parameters.AddWithValue(p.Item1, p.Item2 ?? DBNull.Value);
-                return cmd.ExecuteNonQuery() > 0;
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = sql;
+                    foreach (var p in ps) cmd.Parameters.AddWithValue(p.Item1, p.Item2 ?? DBNull.Value);
+                    return cmd.ExecuteNonQuery() > 0;
+                }
             }
         }
 
@@ -291,10 +315,13 @@ CREATE TABLE IF NOT EXISTS ""Users"" (
 
         public int CountUsers()
         {
-            using (var cmd = Conn.CreateCommand())
+            lock (_gate)
             {
-                cmd.CommandText = "SELECT COUNT(*) FROM Users;";
-                return Convert.ToInt32(cmd.ExecuteScalar());
+                using (var cmd = Conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT COUNT(*) FROM Users;";
+                    return Convert.ToInt32(cmd.ExecuteScalar());
+                }
             }
         }
     }

@@ -73,6 +73,11 @@ namespace AECC.LoadServer
         public static long VerifyViolations;      // нарушение серверных инвариантов
         public static long GoldMinted;            // всего выдано золота (сверка экономики)
 
+        // ── Диагностика производительности тиков ────────────────────────────
+        public static long RollTicks, RollTickMsTotal, RollTickMsMax;
+        public static long GameTicks, GameTickMsTotal, GameTickMsMax;
+        public static long EventsReceived;        // бизнес-события, дошедшие до хендлеров
+
         public static readonly List<string> ClientLines = new List<string>();
         public static readonly ManualResetEventSlim ClientFinished = new ManualResetEventSlim(false);
         public static int ClientPassed, ClientFailed;
@@ -395,6 +400,7 @@ namespace AECC.LoadServer
         // ── SHOOT: событие → данные (урон/откат/киллы) с двойной проверкой ──
         private static void HandleShoot(ShootEvent evt)
         {
+            Interlocked.Increment(ref EventsReceived);
             var shooter = PlayerOf(evt);
             if (shooter == null) return;
 
@@ -551,6 +557,7 @@ namespace AECC.LoadServer
         // ── Мины ──
         private static void HandlePlaceMine(PlaceMineEvent evt)
         {
+            Interlocked.Increment(ref EventsReceived);
             var player = PlayerOf(evt);
             if (player == null) return;
 
@@ -728,6 +735,7 @@ namespace AECC.LoadServer
         private static void GameTick()
         {
             long now = LK.NowMs;
+            var swTick = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 foreach (var s in Sessions)
@@ -798,6 +806,11 @@ namespace AECC.LoadServer
             {
                 NLogger.LogError("[LOAD-SERVER] GameTick: " + ex);
             }
+            swTick.Stop();
+            Interlocked.Increment(ref GameTicks);
+            Interlocked.Add(ref GameTickMsTotal, swTick.ElapsedMilliseconds);
+            if (swTick.ElapsedMilliseconds > Interlocked.Read(ref GameTickMsMax))
+                Interlocked.Exchange(ref GameTickMsMax, swTick.ElapsedMilliseconds);
         }
 
         private static void BeginRestart(Session s)
@@ -932,7 +945,15 @@ namespace AECC.LoadServer
         {
             try
             {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 lock (SerGate) RollTickLocked();
+                sw.Stop();
+                Interlocked.Increment(ref RollTicks);
+                Interlocked.Add(ref RollTickMsTotal, sw.ElapsedMilliseconds);
+                if (sw.ElapsedMilliseconds > Interlocked.Read(ref RollTickMsMax))
+                    Interlocked.Exchange(ref RollTickMsMax, sw.ElapsedMilliseconds);
+                if (RollTicks % 100 == 0)
+                    NLogger.Log($"[LOAD-SERVER] roll-tick #{RollTicks}: avg={RollTickMsTotal / Math.Max(1, RollTicks)}ms max={RollTickMsMax}ms; game-tick #{GameTicks}: avg={GameTickMsTotal / Math.Max(1, GameTicks)}ms max={GameTickMsMax}ms; eventsReceived={EventsReceived}");
             }
             catch (Exception ex)
             {

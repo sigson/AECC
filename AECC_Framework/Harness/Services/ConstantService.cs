@@ -482,25 +482,26 @@ namespace AECC.Harness.Services
                         this.FreezeCurrentService(() => {
                             if (GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Client)
                             {
-                                NetworkService.instance.EventManager.Dispatch(new ConfigCheckEvent()
+                                // NetworkService step 1 (Instance.Start) может ещё выполняться:
+                                // до его завершения EventManager не инициализирован, поэтому шлём
+                                // ConfigCheckEvent только после готовности сокета.
+                                int configCheckSent = 0;
+                                Action<ISocketAdapter> sendConfigCheck = (_) =>
                                 {
-                                    configHash = hashConfig,
-                                    Destination = GlobalProgramState.instance.ClientNetworkGameDestination
-                                });
+                                    if (System.Threading.Interlocked.Exchange(ref configCheckSent, 1) != 0)
+                                        return;
+                                    NetworkService.instance.EventManager.Dispatch(new ConfigCheckEvent()
+                                    {
+                                        configHash = hashConfig,
+                                        Destination = GlobalProgramState.instance.ClientNetworkGameDestination
+                                    });
+                                };
+                                NetworkService.instance.OnSocketReady += sendConfigCheck;
+                                // Сокет мог стать готовым до подписки — проверяем уже готовые.
+                                var readySocket = NetworkService.instance.SocketsById?.Values.FirstOrDefault();
+                                if (readySocket != null)
+                                    sendConfigCheck(readySocket);
                             }
-                            // Action<ISocketAdapter> socketAction = (ISocketAdapter socketAdapter) =>
-                            // {
-                                
-                            // };
-                            // if (NetworkService.instance.ClientSockets.Count() == 0)
-                            // {
-                            //     NetworkingService.instance.OnConnectExternal += new SocketHandler(socketAction);
-
-                            // }
-                            // else
-                            // {
-                            //     socketAction(NetworkingService.instance.ClientSocket);
-                            // }
 							if (GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Server || GlobalProgramState.instance.ProgramType == GlobalProgramState.ProgramTypeEnum.Offline )
                                 this.UnfreezeCurrentService();
                         });

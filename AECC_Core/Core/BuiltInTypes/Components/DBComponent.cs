@@ -474,9 +474,16 @@ namespace AECC.Core.BuiltInTypes.Components
                         continue;
                     }
                     var ecsComponent = ownerList[entityRowValues[i].componentInstanceId];
+                    // Реакции — асинхронно: AfterDeserializeDB выполняется под write-гейтом
+                    // StabilizationGate (UpdateDeserialize), а реакции берут SyncRoot
+                    // диспетчера ⇒ синхронный вызов даёт дедлок с дрейнером,
+                    // ждущим этот же гейт из ChangeComponent.
                     if (ecsComponent.Item2 == ComponentState.Created)
                     {
-                        ecsComponent.Item1.AddedReaction(ecsComponent.Item1.ownerEntity);
+                        TaskEx.RunAsync(() =>
+                        {
+                            ecsComponent.Item1.AddedReaction(ecsComponent.Item1.ownerEntity);
+                        });
                         createdCount++;
                     }
                     if (ecsComponent.Item2 == ComponentState.Changed)
@@ -490,7 +497,8 @@ namespace AECC.Core.BuiltInTypes.Components
                     }
                     if (ecsComponent.Item2 == ComponentState.Removed)
                     {
-                        ecsComponent.Item1.RemovingReaction(ecsComponent.Item1.ownerEntity);
+                        var removedComp = ecsComponent.Item1;
+                        TaskEx.RunAsync(() => removedComp.RemovingReaction(removedComp.ownerEntity));
                         ownerList.Remove(ecsComponent.Item1.instanceId);
                         owner.ComponentOwners.Remove(ecsComponent.Item1.instanceId);
                         removedCount++;
@@ -880,16 +888,18 @@ namespace AECC.Core.BuiltInTypes.Components
 
         #region remove methods
 
-        public virtual void RemoveComponent(long componentId, IECSObject ownerComponent = null)
+        /// <summary>
+        /// Помечает компонент Removed под write-гейтом. RemovingReaction НЕ вызывает —
+        /// реакция обязана выполняться ВНЕ StabilizationGate (иначе дедлок с
+        /// ComponentLifecycleDispatcher: реакция ждёт SyncRoot, а дрейнер под SyncRoot
+        /// ждёт этот же write-гейт из ChangeComponent). Возвращает компонент для вызова
+        /// реакции после выхода из гейта.
+        /// </summary>
+        private ECSComponent RemoveComponentCore(long componentId, IECSObject ownerComponent)
         {
-            if (!ComponentOwners.ContainsKey(componentId))
-            {
-                NLogger.LogErrorDB("error remove component from db");
-                return;
-            }
             ECSComponent removedComponent = null;
             var changes = new List<(ECSComponent, ComponentState, string)>();
-            
+
             using(ownerEntity.entityComponents.StabilizationGate.WriteLock())
             {
                 {
@@ -911,7 +921,7 @@ namespace AECC.Core.BuiltInTypes.Components
                         ChangedComponents[componentId] = 1;
                         removedComponent = comp.Item1;
                         changes.Add((comp.Item1, ComponentState.Removed, "Removed"));
-                        
+
                         LogDBState($"RemoveComponent({GetComponentTypeName(comp.Item1)})", changes);
                     }
                     else
@@ -920,6 +930,17 @@ namespace AECC.Core.BuiltInTypes.Components
                     }
                 }
             }
+            return removedComponent;
+        }
+
+        public virtual void RemoveComponent(long componentId, IECSObject ownerComponent = null)
+        {
+            if (!ComponentOwners.ContainsKey(componentId))
+            {
+                NLogger.LogErrorDB("error remove component from db");
+                return;
+            }
+            var removedComponent = RemoveComponentCore(componentId, ownerComponent);
             if(removedComponent != null)
             {
                 removedComponent.RemovingReaction(removedComponent.ownerEntity);
@@ -1057,6 +1078,8 @@ namespace AECC.Core.BuiltInTypes.Components
 
         public void RemoveComponentsByOwner(long instanceId)
         {
+            // Реакции — строго после выхода из DbWriteScope (см. RemoveComponentCore).
+            var removedComponents = new List<ECSComponent>();
             try
             {
                 using (this.DbWriteScope())
@@ -1067,7 +1090,9 @@ namespace AECC.Core.BuiltInTypes.Components
                         foreach (var inter in dbsnap.ToList())
                         {
                             changes.Add((inter.Value.Item1, ComponentState.Removed, "Removed"));
-                            this.RemoveComponent(inter.Value.Item1.instanceId);
+                            var removed = RemoveComponentCore(inter.Value.Item1.instanceId, null);
+                            if (removed != null)
+                                removedComponents.Add(removed);
                         }
 
                         if (LoggingLevel >= DBLoggingLevel.CountAndTypes)
@@ -1081,10 +1106,13 @@ namespace AECC.Core.BuiltInTypes.Components
             {
                 NLogger.LogErrorDB($"error remove components from db by owner {ex.Message} \n [[[[[[[[[{ex.StackTrace}]]]]]]]]]");
             }
+            removedComponents.ForEach(x => x.RemovingReaction(x.ownerEntity));
         }
 
         public virtual void ClearDB()
         {
+            // Реакции — строго после выхода из DbWriteScope (см. RemoveComponentCore).
+            var removedComponents = new List<ECSComponent>();
             try
             {
                 using (this.DbWriteScope())
@@ -1097,7 +1125,9 @@ namespace AECC.Core.BuiltInTypes.Components
                         foreach (var inter in dbinter.Value.SnapshotI(null))
                         {
                             changes.Add((inter.Value.Item1, ComponentState.Removed, "Cleared"));
-                            this.RemoveComponent(inter.Value.Item1.instanceId);
+                            var removed = RemoveComponentCore(inter.Value.Item1.instanceId, null);
+                            if (removed != null)
+                                removedComponents.Add(removed);
                         }
                     }
 
@@ -1108,6 +1138,7 @@ namespace AECC.Core.BuiltInTypes.Components
             {
                 NLogger.LogErrorDB("error remove components from db by owner");
             }
+            removedComponents.ForEach(x => x.RemovingReaction(x.ownerEntity));
         }
 
         #endregion
@@ -1138,8 +1169,14 @@ namespace AECC.Core.BuiltInTypes.Components
                             var ecsComponent = ownerList[entityRowValues[i].componentInstanceId];
                             if (ecsComponent.Item2 == ComponentState.Removed)
                             {
-                                ecsComponent.Item1.RemovingReaction(ecsComponent.Item1.ownerEntity);
+                                // Реакция — асинхронно: AfterSerializationDB выполняется под
+                                // read-гейтом StabilizationGate (SlicedSerialize), а реакция
+                                // берёт SyncRoot диспетчера ⇒ синхронный вызов даёт дедлок.
+                                var removedComp = ecsComponent.Item1;
+                                TaskEx.RunAsync(() => removedComp.RemovingReaction(removedComp.ownerEntity));
                                 ownerList.Remove(ecsComponent.Item1.instanceId);
+                                // Иначе id вечно числится «живым» (реестр живости, ChangeComponent).
+                                ComponentOwners.Remove(ecsComponent.Item1.instanceId);
                                 removedCount++;
                             }
                             if(ownerList.Count == 0)

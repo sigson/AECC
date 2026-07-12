@@ -98,7 +98,9 @@ namespace AECC.Core
                 if (redirect != null)
                     return redirect.Add(entity, silent);
 
-                _listener.AddFailed(entity);
+                // silent-путь — ожидаемая гонка (UpdateDeserialize превратит пакет в апдейт).
+                if (!silent)
+                    _listener.AddFailed(entity);
                 return false;
             }
 
