@@ -391,7 +391,9 @@ namespace AECC.Locking
         public bool HoldKey(TKey key, bool exclusive, out RWToken lockToken)
         {
             lockToken = default(RWToken);
-            if (SingleThread) return true; // single-thread: nothing to reserve
+            // ST: predicate parity with the MT path below (lockdown / HoldKeys / absence),
+            // minus the reservation itself.
+            if (SingleThread) return !_lockdown && HoldKeys && !_dict.ContainsKey(key);
             if (_lockdown) return false;
             if (!HoldKeys) return false;
 

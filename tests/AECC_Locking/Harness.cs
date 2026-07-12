@@ -254,6 +254,7 @@ namespace AECC.Locking.Benchmark
             SharedHoldBlocksAdd();
             ReadBlocksWrite();
             HoldThenAddAfterRelease();
+            SingleThreadHoldPredicate();
             CrossModeDummy();
             SameModeReentry();
             CombinatorAllOrRelease();
@@ -352,6 +353,35 @@ namespace AECC.Locking.Benchmark
             Report("lifecycle: hold->release->add->remove->hold-absent",
                 held && addAfter && removed && holdAgain,
                 "held=" + held + " add=" + addAfter + " rem=" + removed + " reHold=" + holdAgain);
+        }
+
+        private static void SingleThreadHoldPredicate()
+        {
+            // ST-режим: absence-hold обязан отказывать на ПРИСУТСТВУЮЩЕМ ключе и
+            // успевать на отсутствующем (паритет предиката с MT минус резервирование).
+            bool prev = Defines.OneThreadMode;
+            Defines.OneThreadMode = true;
+            try
+            {
+                var bag = new ComponentBag<object>();
+                bag.TryAdd(1, Sentinel);
+                bool ranOnPresent = false, ranOnAbsent = false;
+                bool grantedPresent = bag.ExecuteHoldRead(1, () => ranOnPresent = true);
+                bool grantedAbsent = bag.ExecuteHoldRead(2, () => ranOnAbsent = true);
+
+                var dict = new LockedDictionarySlim<int, object>(preserveLockingKeys: true);
+                dict.TryAdd(1, Sentinel);
+                RWToken dt;
+                bool dictPresent = dict.HoldKey(1, out dt); if (dictPresent) dt.Dispose();
+                bool dictAbsent = dict.HoldKey(2, out dt); if (dictAbsent) dt.Dispose();
+
+                Report("ST hold honors absence predicate (bag + dict)",
+                    !grantedPresent && !ranOnPresent && grantedAbsent && ranOnAbsent &&
+                    !dictPresent && dictAbsent,
+                    "bag: present=" + grantedPresent + " absent=" + grantedAbsent +
+                    " dict: present=" + dictPresent + " absent=" + dictAbsent);
+            }
+            finally { Defines.OneThreadMode = prev; }
         }
 
         private static void CrossModeDummy()

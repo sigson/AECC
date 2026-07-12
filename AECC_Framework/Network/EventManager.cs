@@ -30,6 +30,14 @@ namespace AECC.Network
         // ── Malicious scoring (carried over from original) ──
         public ConcurrentDictionary<long, ScoreObject> MaliciousScoringStorage = new ConcurrentDictionary<long, ScoreObject>();
 
+        /// <summary>
+        /// Optional authentication hook for events arriving from the network.
+        /// Called after SocketSource is bound and before Execute(). Return false to
+        /// silently drop the event (same treatment as a failed CheckPacket()).
+        /// The socket argument may be null for connectionless transports (UDP).
+        /// </summary>
+        public Func<NetworkEvent, ISocketAdapter, bool> IncomingEventAuthorizer;
+
         // ── Reference to networking instance for sending ──
         private NetworkingInstance _networkingInstance;
 
@@ -111,6 +119,11 @@ namespace AECC.Network
         internal void DispatchFromNetwork(NetworkEvent evt, ISocketAdapter source)
         {
             evt.SocketSource = source;
+            if (IncomingEventAuthorizer != null && !IncomingEventAuthorizer(evt, source))
+            {
+                NLogger.LogError($"Rejected unauthorized packet: {evt.GetType().Name} (owner {evt.EntityOwnerId}, socket {evt.SocketSourceId})");
+                return;
+            }
             Dispatch(evt);
         }
     }

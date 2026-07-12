@@ -275,7 +275,13 @@ namespace AECC.Locking
         public bool Hold(int key, bool exclusive, out RWToken token)
         {
             token = default(RWToken);
-            if (SingleThread) return true;
+            if (SingleThread)
+            {
+                // ST: reservation is a no-op, but the transactional predicate must still
+                // hold — grant the "absence hold" only when the key is actually absent
+                // and the store accepts holds, mirroring the MT outcome minus the lock.
+                return !_lockdown && !ContainsKey(key);
+            }
             using (Mutation())
             {
                 if (_lockdown) return false;
