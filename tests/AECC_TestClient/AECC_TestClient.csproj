@@ -19,10 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
-    <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
-    <ProjectReference Include="..\AECC_Framework\AECC_Framework.csproj" />
-    <ProjectReference Include="..\AECC_Packages\AECC_Packages.csproj" />
+    <ProjectReference Include="..\..\AECC_Core\AECC_Core.csproj" />
+    <ProjectReference Include="..\..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
+    <ProjectReference Include="..\..\AECC_Framework\AECC_Framework.csproj" />
+    <ProjectReference Include="..\..\AECC_Packages\AECC_Packages.csproj" />
   </ItemGroup>
 
 </Project>

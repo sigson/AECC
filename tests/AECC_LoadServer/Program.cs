@@ -17,8 +17,8 @@ namespace AECC.LoadServer
     /// <summary>
     /// AECC_LoadServer — сервер нагрузочного клиент-серверного сессионного теста.
     ///
-    /// Запуск:  dotnet run -c Release --project AECC_LoadServer [timeoutSec=300]
-    /// Затем:   dotnet run -c Release --project AECC_LoadClient [clients] [durationSec] [prefix]
+    /// Запуск:  dotnet run -c Release --project tests/AECC_LoadServer [timeoutSec=300]
+    /// Затем:   dotnet run -c Release --project tests/AECC_LoadClient [clients] [durationSec] [prefix]
     ///
     /// Все параметры нагрузки — в AECC_LoadShared/LoadKit.cs (LK.*), переопределяются
     /// переменными окружения AECC_LOAD_*. AECC_LOAD_VERIFYMODE=false отключает двойные

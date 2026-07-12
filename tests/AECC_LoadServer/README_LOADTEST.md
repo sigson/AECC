@@ -4,16 +4,16 @@
 
 | Папка | Что это |
 |---|---|
-| `AECC_LoadShared/` | Общие исходники (константы `LK`, компоненты, события) — линкуются **в оба** проекта |
-| `AECC_LoadServer/` | Авторитарный сервер: сессии, GDAP, мины (DBComponent), роллинг, двойные проверки |
-| `AECC_LoadClient/` | **Мультиклиент-хост**: N виртуальных клиентов, каждый со своим TCP-соединением |
+| `tests/AECC_LoadShared/` | Общие исходники (константы `LK`, компоненты, события) — линкуются **в оба** проекта |
+| `tests/AECC_LoadServer/` | Авторитарный сервер: сессии, GDAP, мины (DBComponent), роллинг, двойные проверки |
+| `tests/AECC_LoadClient/` | **Мультиклиент-хост**: N виртуальных клиентов, каждый со своим TCP-соединением |
 
 ## Запуск
 
 ```bash
-dotnet run -c Release --project AECC_LoadServer   [timeoutSec=300]
+dotnet run -c Release --project tests/AECC_LoadServer   [timeoutSec=300]
 # затем, вторым процессом:
-dotnet run -c Release --project AECC_LoadClient   [clients=8] [durationSec=75] [prefix]
+dotnet run -c Release --project tests/AECC_LoadClient   [clients=8] [durationSec=75] [prefix]
 ```
 
 Exit code 0 у обоих — все проверки прошли (мультиклиент дополнительно шлёт свой отчёт
@@ -24,7 +24,7 @@ Exit code 0 у обоих — все проверки прошли (мульти
 клиентского мира по `SessionMemberLeftEvent` (в одном процессе все игроки «свои»,
 и хост держит их сущности живыми по интерес-рефкаунту).
 
-## Константы (`AECC_LoadShared/LoadKit.cs`)
+## Константы (`tests/AECC_LoadShared/LoadKit.cs`)
 
 Всё, что просила постановка, — статические поля `LK.*`, переопределяются окружением
 `AECC_LOAD_<ИМЯ>` без пересборки (сервер и клиент должны видеть одинаковые значения):

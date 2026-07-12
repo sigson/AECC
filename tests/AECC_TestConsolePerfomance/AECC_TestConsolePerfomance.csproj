@@ -8,9 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
-    <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
-	<ProjectReference Include="..\AECC_Framework\AECC_Framework.csproj" />
+    <ProjectReference Include="..\..\AECC_Core\AECC_Core.csproj" />
+    <ProjectReference Include="..\..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
+	<ProjectReference Include="..\..\AECC_Framework\AECC_Framework.csproj" />
 
 
 	<PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />

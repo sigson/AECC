@@ -18,7 +18,7 @@ namespace AECC.LoadClient
     /// AECC_LoadClient — мультиклиент-хост нагрузочного сессионного теста.
     ///
     /// Запуск (ПОСЛЕ AECC_LoadServer):
-    ///   dotnet run -c Release --project AECC_LoadClient [clients=8] [durationSec=75] [prefix=load&lt;rnd&gt;]
+    ///   dotnet run -c Release --project tests/AECC_LoadClient [clients=8] [durationSec=75] [prefix=load&lt;rnd&gt;]
     ///
     /// Хост держит внутри себя N виртуальных клиентов (N ≤ LK.MulticlientCapacity),
     /// каждый — со своим TCP-соединением, регистрацией и поведением. Двойные проверки

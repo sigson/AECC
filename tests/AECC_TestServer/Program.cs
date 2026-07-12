@@ -19,8 +19,8 @@ namespace AECC.TestServer
     ///   ФАЗА A: локальная батарея ядра ECS (EcsCoreSuite) — без сети.
     ///   ФАЗА B: полный харнесс (сервисы → сеть → БД → авторизация → авторитарный роллинг).
     ///
-    /// Запуск:  dotnet run --project AECC_TestServer      (первым!)
-    /// Затем:   dotnet run --project AECC_TestClient
+    /// Запуск:  dotnet run --project tests/AECC_TestServer      (первым!)
+    /// Затем:   dotnet run --project tests/AECC_TestClient
     ///
     /// Exit code 0 — все проверки (серверные + присланные клиентом) прошли.
     /// </summary>
