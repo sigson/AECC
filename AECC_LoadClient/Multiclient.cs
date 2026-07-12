@@ -500,6 +500,7 @@ namespace AECC.LoadClient
             private double RngDouble() { lock (_rngGate) return _rng.NextDouble(); }
             private int RngNext(int maxExclusive) { lock (_rngGate) return _rng.Next(maxExclusive); }
             private long _stateSince, _nextShotAt, _nextMineAt, _nextCheckAt, _authSentAt;
+            private long _aloneSince;   // «скучно одному»: время с момента, когда в сессии не осталось целей
             private int _gunCursor;
             private bool _triedLoginFallback;
             private volatile bool _restartPending;
@@ -790,6 +791,25 @@ namespace AECC.LoadClient
                     return;
                 }
                 if (_restartPending) _restartPending = false;
+
+                // «Скучно одному»: без партнёров нет ни целей, ни киллов, ни рестартов —
+                // одиночество не рассасывается само. Выходим и перевыбираем сессию
+                // (TickChoose предпочитает заполняющиеся). Порог рандомизирован, чтобы
+                // два одиночки не выходили синхронно и не менялись пустыми сессиями.
+                if (!members.Any(m => m != PlayerEntityId))
+                {
+                    if (_aloneSince == 0) _aloneSince = now + RngNext(3000);
+                    else if (now - _aloneSince > 4000)
+                    {
+                        _aloneSince = 0;
+                        Send(new LeaveSessionEvent());
+                        State = VCState.LeavePending;
+                        _stateSince = now;
+                        return;
+                    }
+                }
+                else
+                    _aloneSince = 0;
 
                 // стрельба: частота на игрока, round-robin по пушкам (задел до 32)
                 if (now >= _nextShotAt)

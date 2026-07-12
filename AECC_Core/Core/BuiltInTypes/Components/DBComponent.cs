@@ -852,11 +852,10 @@ namespace AECC.Core.BuiltInTypes.Components
 
         public virtual void ChangeComponent(ECSComponent component, IECSObject ownerComponent = null)
         {
+            // Отсутствие id — легитимная гонка: отложенная реакция (OnAdded→MarkAsChanged)
+            // может прийти после удаления компонента (взрыв/смерть/рестарт) — тихий no-op.
             if(!ComponentOwners.ContainsKey(component.instanceId))
-            {
-                NLogger.LogErrorDB("error change component from db");
                 return;
-            }
             
             var changes = new List<(ECSComponent, ComponentState, string)>();
             
@@ -867,17 +866,18 @@ namespace AECC.Core.BuiltInTypes.Components
                     long owner = 0;
                     if (ownerComponent == null)
                     {
+                        // Гонка: компонент удалили между пре-чеком и захватом гейта — no-op.
                         if (!ComponentOwners.TryGetValue(component.instanceId, out owner))
-                        {
-                            NLogger.LogErrorDB("error change component from db");
-                        }
+                            return;
                     }
                     else
                         owner = ownerComponent.instanceId;
-                    DB[owner][component.instanceId] = (component, ComponentState.Changed);
+                    if (!DB.TryGetValue(owner, out var ownerRows) || !ownerRows.ContainsKey(component.instanceId))
+                        return;
+                    ownerRows[component.instanceId] = (component, ComponentState.Changed);
                     ChangedComponents[component.instanceId] = 1;
                     changes.Add((component, ComponentState.Changed, "Changed"));
-                    
+
                     LogDBState($"ChangeComponent({GetComponentTypeName(component)})", changes);
                 }
             }
@@ -909,24 +909,26 @@ namespace AECC.Core.BuiltInTypes.Components
                     {
                         if (!ComponentOwners.TryGetValue(componentId, out owner))
                         {
-                            NLogger.LogErrorDB("error remove component from db");
+                            // Гонка: компонент успели удалить (смерть/рестарт/AfterSnapshot)
+                            // между решением вызывающего и захватом гейта — мягкий no-op.
+                            return null;
                         }
                     }
                     else
                         owner = ownerComponent.instanceId;
-                    (ECSComponent, ComponentState) comp;
-                    if (DB[owner].TryGetValue(componentId, out comp))
+                    if (!DB.TryGetValue(owner, out var ownerRows))
                     {
-                        DB[owner][componentId] = (comp.Item1, ComponentState.Removed);
+                        return null;
+                    }
+                    (ECSComponent, ComponentState) comp;
+                    if (ownerRows.TryGetValue(componentId, out comp))
+                    {
+                        ownerRows[componentId] = (comp.Item1, ComponentState.Removed);
                         ChangedComponents[componentId] = 1;
                         removedComponent = comp.Item1;
                         changes.Add((comp.Item1, ComponentState.Removed, "Removed"));
 
                         LogDBState($"RemoveComponent({GetComponentTypeName(comp.Item1)})", changes);
-                    }
-                    else
-                    {
-                        NLogger.LogErrorDB("error remove component from db");
                     }
                 }
             }
@@ -935,11 +937,10 @@ namespace AECC.Core.BuiltInTypes.Components
 
         public virtual void RemoveComponent(long componentId, IECSObject ownerComponent = null)
         {
+            // Отсутствие id — легитимная гонка (взрыв мины vs удаление по смерти/рестарту):
+            // авторитетную проверку и no-op делает RemoveComponentCore под гейтом.
             if (!ComponentOwners.ContainsKey(componentId))
-            {
-                NLogger.LogErrorDB("error remove component from db");
                 return;
-            }
             var removedComponent = RemoveComponentCore(componentId, ownerComponent);
             if(removedComponent != null)
             {
