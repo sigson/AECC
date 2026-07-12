@@ -33,9 +33,14 @@ namespace AECC.LoadServer
         public static int Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            int clientTimeoutSec = args.Length > 0 && int.TryParse(args[0], out var t) ? t : 300;
 
             LK.ApplyEnvOverrides();
+
+            // Дефолт масштабируется от ёмкости мультиклиента: фоновый спавн клиентов
+            // занимает MulticlientCapacity × ClientSpawnDelayMs, плюс ожидания входа
+            // (до 180 c) и сам сценарий (~300 c).
+            int defaultTimeoutSec = 300 + 180 + LK.MulticlientCapacity * LK.ClientSpawnDelayMs / 1000;
+            int clientTimeoutSec = args.Length > 0 && int.TryParse(args[0], out var t) ? t : defaultTimeoutSec;
 
             // Режим конкуренции фиксируется в момент конструирования локов — ДО миров.
             Bootstrapping.ConfigureKernel(multiThread: true);

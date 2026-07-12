@@ -53,7 +53,8 @@ namespace AECC.LoadClient
 
         private static ISerializationAdapter _inspector;
         private static volatile bool _running;
-        private static Thread _tickThread, _sweepThread;
+        private static Thread[] _tickThreads;
+        private static Thread _sweepThread, _spawnThread;
         private static readonly Random HostRng = new Random();
         private static readonly object HostRngGate = new object();
 
@@ -95,17 +96,40 @@ namespace AECC.LoadClient
             // vc0 живёт на default-инстансе NetworkService (он уже подключён и провёл
             // обмен конфигом); остальные поднимают собственные NetworkingInstance.
             Clients[0].AttachInstance(NetworkService.instance.Instance);
-            for (int i = 1; i < Clients.Count; i++)
-            {
-                Clients[i].SpawnOwnInstance();
-                Thread.Sleep(LK.ClientSpawnDelayMs);
-            }
 
             _running = true;
-            _tickThread = new Thread(TickLoop) { IsBackground = true, Name = "mc-tick" };
-            _tickThread.Start();
+
+            // Тик-потоки стартуют ДО спавна: уже поднятые клиенты сразу регистрируются
+            // и играют, пока остальные ещё спавнятся (при 1000 клиентов спавн занимает
+            // clients × ClientSpawnDelayMs ≈ минуты — раньше всё это время никто не тикал,
+            // и лог выглядел как «бесконечные подключения» без старта нагрузки).
+            int tickThreads = Math.Max(1, Math.Min(LK.MulticlientTickThreads, clientCount));
+            _tickThreads = new Thread[tickThreads];
+            for (int t = 0; t < tickThreads; t++)
+            {
+                int shard = t;
+                _tickThreads[t] = new Thread(() => TickLoop(shard, tickThreads))
+                    { IsBackground = true, Name = "mc-tick-" + shard };
+                _tickThreads[t].Start();
+            }
             _sweepThread = new Thread(SweepLoop) { IsBackground = true, Name = "mc-sweep" };
             _sweepThread.Start();
+
+            // Спавн — в фоне, с прежним темпом ClientSpawnDelayMs.
+            _spawnThread = new Thread(() =>
+            {
+                for (int i = 1; i < Clients.Count && _running; i++)
+                {
+                    try { Clients[i].SpawnOwnInstance(); }
+                    catch (Exception ex) { NLogger.LogError("[MC] spawn " + Clients[i].Name + ": " + ex.Message); }
+                    if (i % 100 == 0)
+                        NLogger.Log("[MC] спавн: " + i + "/" + Clients.Count +
+                                    ", авторизовано " + Clients.Count(v => v.PlayerEntityId != 0));
+                    Thread.Sleep(LK.ClientSpawnDelayMs);
+                }
+                NLogger.LogSuccess("[MC] спавн завершён: " + Clients.Count + " клиентов");
+            }) { IsBackground = true, Name = "mc-spawn" };
+            _spawnThread.Start();
         }
 
         public static void StopActivity()
@@ -116,7 +140,10 @@ namespace AECC.LoadClient
         public static void Shutdown()
         {
             _running = false;
-            try { _tickThread?.Join(2000); } catch { }
+            try { _spawnThread?.Join(2000); } catch { }
+            if (_tickThreads != null)
+                foreach (var t in _tickThreads)
+                    try { t?.Join(2000); } catch { }
             try { _sweepThread?.Join(2000); } catch { }
             foreach (var vc in Clients) vc.DisposeInstance();
         }
@@ -275,13 +302,14 @@ namespace AECC.LoadClient
         // ─────────────────────────────────────────────────────────────────────
         //  Тик виртуальных клиентов
         // ─────────────────────────────────────────────────────────────────────
-        private static void TickLoop()
+        private static void TickLoop(int shard, int step)
         {
             while (_running)
             {
                 long now = LK.NowMs;
-                foreach (var vc in Clients)
+                for (int i = shard; i < Clients.Count; i += step)
                 {
+                    var vc = Clients[i];
                     try { vc.Tick(now); }
                     catch (Exception ex) { NLogger.LogError("[MC] tick " + vc.Name + ": " + ex.Message); }
                 }
@@ -503,6 +531,7 @@ namespace AECC.LoadClient
             private long _aloneSince;   // «скучно одному»: время с момента, когда в сессии не осталось целей
             private int _gunCursor;
             private bool _triedLoginFallback;
+            private int _authAttempts;
             private volatile bool _restartPending;
             private volatile bool _awaitingUpgradeResult;
             private long _upgradeGold; private List<int> _upgradeLevels;
@@ -677,6 +706,7 @@ namespace AECC.LoadClient
 
             public void Tick(long now)
             {
+                if (Instance == null) return; // ещё не заспавнен (фоновый спавн)
                 switch (State)
                 {
                     case VCState.Connecting: TickConnecting(now); break;
@@ -717,9 +747,11 @@ namespace AECC.LoadClient
                     State = VCState.Registering;
                     _stateSince = now;
                 }
-                else if (now - _stateSince > 30000)
+                else if (now - _stateSince > 120000)
                 {
-                    NLogger.LogError("[MC] " + Name + ": сокет не поднялся за 30 c");
+                    // Под полной нагрузкой (1000 клиентов) identity-хендшейк может
+                    // застревать за роллинг-трафиком заметно дольше 30 c.
+                    NLogger.LogError("[MC] " + Name + ": сокет не поднялся за 120 c");
                     State = VCState.Parked;
                 }
             }
@@ -727,11 +759,26 @@ namespace AECC.LoadClient
             private void TickRegistering(long now)
             {
                 if (now - _authSentAt <= 8000) return;
-                if (!_triedLoginFallback)
+                // Под нагрузкой ответ на регистрацию может опаздывать сильно дольше 8 c —
+                // чередуем логин (повторный прогон: имя занято) и регистрацию до ~80 c.
+                if (_authAttempts < 10)
                 {
-                    // повторный прогон против живого сервера: имя занято ⇒ обычный логин
-                    _triedLoginFallback = true;
-                    Send(new ClientAuthEvent { Username = Name, Password = LK.Password });
+                    _authAttempts++;
+                    if (_authAttempts % 2 == 1)
+                    {
+                        _triedLoginFallback = true;
+                        Send(new ClientAuthEvent { Username = Name, Password = LK.Password });
+                    }
+                    else
+                    {
+                        Send(new ClientRegistrationEvent
+                        {
+                            Username = Name,
+                            Password = LK.Password,
+                            Email = Name + LK.EmailDomain,
+                            HardwareId = "LOADHW" + Index,
+                        });
+                    }
                     _authSentAt = now;
                 }
                 else

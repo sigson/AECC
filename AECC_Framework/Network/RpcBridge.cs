@@ -186,7 +186,7 @@ namespace AECC.Network
 
         public RpcBridge(ISocketAdapter socket, object rpcTarget = null)
         {
-            NLogger.Warn("RpcBridge: RPC is not supported on this runtime (requires .NET 5+). Bridge created as no-op stub.");
+            //NLogger.Warn("RpcBridge: RPC is not supported on this runtime (requires .NET 5+). Bridge created as no-op stub.");
         }
 
         public void Start() { }

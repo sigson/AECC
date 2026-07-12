@@ -63,26 +63,36 @@ namespace AECC.LoadClient
             R.Check("мультиклиент в пределах ёмкости: " + clients + " ≤ " + LK.MulticlientCapacity,
                 clients <= LK.MulticlientCapacity);
 
+            // На сотнях клиентов Network-категория (connecting/confirmed на каждый сокет)
+            // забивает 90% вывода — глушим; ошибки и Success идут другими типами.
+            if (clients > 32)
+                NLogger.MutedLogTypes.Add("Network");
+
             Multiclient.Start(World, R, _server, clients, prefix);
 
             NLogger.LogSuccess("[MC] " + clients + " виртуальных клиентов запущены; нагрузка " +
                                durationSec + " c, verify=" + LK.VerifyMode);
 
             // ── фаза разгона: все должны войти в игру ──
+            // Спавн идёт в фоне с темпом ClientSpawnDelayMs — таймауты проверок входа
+            // должны вмещать всё окно спавна (при 1000 клиентах это ~2 минуты).
+            int spawnWindowMs = clients * LK.ClientSpawnDelayMs;
             R.Section("MC1 · подключение и вход");
             R.AwaitCheck("все клиенты авторизовались (UserLoggedEvent)",
-                () => Multiclient.Clients.All(v => v.PlayerEntityId != 0), 60000);
+                () => Multiclient.Clients.All(v => v.PlayerEntityId != 0), 60000 + spawnWindowMs);
             R.AwaitCheck("карта сессий получена (SERVER_READY, " + LK.MaxSessionsOnServer + " сессий)",
                 () => Multiclient.SessionEntityIds.Length == LK.MaxSessionsOnServer, 30000);
+            // GDAP №2: не вошедшему видна только «карточка» (Info + Modifier);
+            // база мин доезжает лишь участнику сессии после JOIN.
             R.AwaitCheck("все сессии приехали раскаткой и несут SessionInfo",
                 () => Multiclient.SessionEntityIds.Length > 0 && Multiclient.SessionEntityIds.All(id =>
                 {
                     var e = Multiclient.Ent(id);
                     return e != null && e.HasComponent<SessionInfoComponent>() &&
-                           e.HasComponent<SessionModifierComponent>() && e.HasComponent<MinesDBComponent>();
+                           e.HasComponent<SessionModifierComponent>();
                 }), 30000);
             R.AwaitCheck("каждый клиент хотя бы раз вошёл в сессию (выбор — на клиенте)",
-                () => Multiclient.Clients.All(v => v.MyJoins > 0), 60000);
+                () => Multiclient.Clients.All(v => v.MyJoins > 0), 60000 + spawnWindowMs);
 
             // ── основная нагрузка ──
             Thread.Sleep(TimeSpan.FromSeconds(durationSec));

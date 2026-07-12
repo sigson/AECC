@@ -53,6 +53,13 @@ namespace AECC.TestServer
 
                     var c = new SqliteConnection(cs);
                     c.Open();
+                    // WAL + NORMAL: иначе каждый INSERT — отдельный fsync (~десятки мс),
+                    // и 1000 регистраций нагрузочного теста упираются в диск (~4/с).
+                    using (var pragma = c.CreateCommand())
+                    {
+                        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;";
+                        pragma.ExecuteNonQuery();
+                    }
                     _connection = c;
                     SetupSchema();
                     return _connection;

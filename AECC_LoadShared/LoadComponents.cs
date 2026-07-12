@@ -129,9 +129,10 @@ namespace AECC.LoadKit
     }
 
     /// <summary>DB-агрегатор мин сессии: строки (MineComponent) принадлежат сущностям
-    /// игроков через IECSObjectPathContainer. Публично (Restricted): мины видят все
-    /// участники — это и даёт клиенту материал для «реестра живости» (строки, чей
-    /// владелец вышел из сессии, паркуются в serializedDBNonEO / зависают).</summary>
+    /// игроков через IECSObjectPathContainer. Видимость — только участникам сессии
+    /// (SessionAccessPolicy, Available по совпадению instanceId); не вошедший видит
+    /// лишь Info+Modifier. Материал для «реестра живости»: строки, чей владелец вышел,
+    /// и вся DB у самого вышедшего — зависают на клиенте.</summary>
     [Serializable]
     [TypeUid(6009)]
     public class MinesDBComponent : ComponentsDBComponent
@@ -160,6 +161,20 @@ namespace AECC.LoadKit
     public class LoadReplicationPolicy : GroupDataAccessPolicy
     {
         public static new long Id { get; set; } = 6101;
+    }
+
+    /// <summary>
+    /// Второй GDAP — членство в сессии. Инстанс политики создаётся один на сессию и
+    /// живёт на её сущности; при JOIN игрок получает КЛОН с тем же instanceId (совпадение
+    /// по инстансу ⇒ Available: Info + Modifier + MinesDB), при LEAVE клон снимается.
+    /// Не-участник совпадает только по типу базовой LoadReplicationPolicy сессии
+    /// ⇒ Restricted: Info + Modifier, БЕЗ базы мин.
+    /// </summary>
+    [Serializable]
+    [TypeUid(6102)]
+    public class SessionAccessPolicy : GroupDataAccessPolicy
+    {
+        public static new long Id { get; set; } = 6102;
     }
 
     /// <summary>

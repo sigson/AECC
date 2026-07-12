@@ -13,8 +13,16 @@ namespace AECC.Core.Logging
         private static DictionaryWrapper<string, List<string>> logs_stack = new DictionaryWrapper<string, List<string>>();
         public static ConcurrentQueue<(string, ConsoleColor, string)> logsBag = new ConcurrentQueue<(string, ConsoleColor, string)>();
 
+        /// <summary>
+        /// Приглушённые категории логов (например "Network" у мультиклиента на 1000
+        /// соединений). Заполнять на старте процесса, до многопоточной фазы.
+        /// </summary>
+        public static readonly HashSet<string> MutedLogTypes = new HashSet<string>();
+
         private static void Write(string type, ConsoleColor color, object content, string logstack = "")
         {
+            if (MutedLogTypes.Count != 0 && MutedLogTypes.Contains(type))
+                return;
             var message = "";
             if(content is Exception)
             {

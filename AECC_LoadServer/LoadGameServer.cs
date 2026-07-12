@@ -39,6 +39,7 @@ namespace AECC.LoadServer
             public int Index;
             public ECSEntity Entity;
             public MinesDBComponent MinesDb;
+            public SessionAccessPolicy MembershipPolicy;   // GDAP №2: членство в сессии
             public int State;               // 0 Running / 1 Restarting
             public int Kills;
             public int KillTarget;
@@ -74,9 +75,10 @@ namespace AECC.LoadServer
         public static long GoldMinted;            // всего выдано золота (сверка экономики)
 
         // ── Диагностика производительности тиков ────────────────────────────
-        public static long RollTicks, RollTickMsTotal, RollTickMsMax;
+        public static long RollTicks, RollTickMsTotal, RollTickMsMax, RollTicksSkipped;
         public static long GameTicks, GameTickMsTotal, GameTickMsMax;
         public static long EventsReceived;        // бизнес-события, дошедшие до хендлеров
+        private static int _rollTickBusy;
 
         public static readonly List<string> ClientLines = new List<string>();
         public static readonly ManualResetEventSlim ClientFinished = new ManualResetEventSlim(false);
@@ -151,18 +153,30 @@ namespace AECC.LoadServer
                 var mines = GroupsL.Server(new MinesDBComponent());
                 e.AddComponent(mines);
 
-                // GDAP: всё про сессию — публично каждому носителю политики этого типа.
+                // GDAP №1: «карта сессий» — Info + Modifier публичны каждому носителю
+                // политики этого типа. База мин сюда НЕ входит.
                 var policy = new LoadReplicationPolicy();
                 policy.RestrictedComponents = new List<long>
                 {
                     LK.Uid<SessionInfoComponent>(),
                     LK.Uid<SessionModifierComponent>(),
-                    LK.Uid<MinesDBComponent>(),
                 };
                 e.dataAccessPolicies.Add(policy);
 
+                // GDAP №2 (членство): совпадение по instanceId (клон выдаётся при JOIN,
+                // снимается при LEAVE) ⇒ участник видит всё, включая базу мин.
+                var membership = new SessionAccessPolicy();
+                membership.AvailableComponents = new List<long>
+                {
+                    LK.Uid<SessionInfoComponent>(),
+                    LK.Uid<SessionModifierComponent>(),
+                    LK.Uid<MinesDBComponent>(),
+                };
+                e.dataAccessPolicies.Add(membership);
+
                 s.Entity = e;
                 s.MinesDb = mines;
+                s.MembershipPolicy = membership;
                 Sessions.Add(s);
             }
 
@@ -350,6 +364,11 @@ namespace AECC.LoadServer
             });
             player.GetComponent<PlayerPublicComponent>().MarkAsChanged();
 
+            // GDAP №2: игрок получает клон политики членства (тот же instanceId ⇒
+            // Available сессии, включая базу мин). Клон, а не ссылка: Bin-буферы политики
+            // перестраиваются сериализацией каждой сущности-носителя.
+            player.dataAccessPolicies.Add((GroupDataAccessPolicy)s.MembershipPolicy.Clone());
+
             // Догоняющий снапшот: сущности всех текущих участников (включая себя) + сессия.
             var sources = new List<ECSEntity>(memberEntities) { s.Entity };
             SendSnapshot(player, sources);
@@ -382,6 +401,13 @@ namespace AECC.LoadServer
 
             player.ExecuteWriteLockedComponent<PlayerPublicComponent>(pp => { pp.SessionIndex = -1; });
             player.GetComponent<PlayerPublicComponent>().MarkAsChanged();
+
+            // GDAP №2: снять политику членства — база мин сессии перестаёт доезжать,
+            // уже приехавшие строки зависают у клиента (материал реестра живости).
+            var carried = player.dataAccessPolicies
+                .FirstOrDefault(p => p.instanceId == s.MembershipPolicy.instanceId);
+            if (carried != null)
+                player.dataAccessPolicies.Remove(carried);
 
             // Мины вышедшего НАМЕРЕННО остаются тикать (взорвутся сами) — вместе с его
             // сущностью, зависшей у оставшихся, это и есть материал для клиентского
@@ -943,6 +969,14 @@ namespace AECC.LoadServer
 
         private static void RollTick()
         {
+            // Под нагрузкой тик может длиться дольше интервала таймера; перекрывающиеся
+            // тики бессмысленны (сериализуют то же состояние) и лишь копят потоки на
+            // SerGate — пропускаем, пока предыдущий не закончился.
+            if (Interlocked.Exchange(ref _rollTickBusy, 1) != 0)
+            {
+                Interlocked.Increment(ref RollTicksSkipped);
+                return;
+            }
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -953,11 +987,15 @@ namespace AECC.LoadServer
                 if (sw.ElapsedMilliseconds > Interlocked.Read(ref RollTickMsMax))
                     Interlocked.Exchange(ref RollTickMsMax, sw.ElapsedMilliseconds);
                 if (RollTicks % 100 == 0)
-                    NLogger.Log($"[LOAD-SERVER] roll-tick #{RollTicks}: avg={RollTickMsTotal / Math.Max(1, RollTicks)}ms max={RollTickMsMax}ms; game-tick #{GameTicks}: avg={GameTickMsTotal / Math.Max(1, GameTicks)}ms max={GameTickMsMax}ms; eventsReceived={EventsReceived}");
+                    NLogger.Log($"[LOAD-SERVER] roll-tick #{RollTicks}: avg={RollTickMsTotal / Math.Max(1, RollTicks)}ms max={RollTickMsMax}ms skipped={RollTicksSkipped}; game-tick #{GameTicks}: avg={GameTickMsTotal / Math.Max(1, GameTicks)}ms max={GameTickMsMax}ms; eventsReceived={EventsReceived}");
             }
             catch (Exception ex)
             {
                 NLogger.LogError("[LOAD-SERVER] RollTick: " + ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _rollTickBusy, 0);
             }
         }
 

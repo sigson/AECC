@@ -33,10 +33,10 @@ namespace AECC.LoadKit
         // ─────────────────────────────────────────────────────────────────────
 
         /// <summary>Максимум пользователей на сервере (HELLO сверх лимита ⇒ SERVER_FULL).</summary>
-        public static int MaxUsersOnServer = 24;
+        public static int MaxUsersOnServer = 10000;
 
         /// <summary>Максимум пользователей в одной сессии.</summary>
-        public static int MaxUsersPerSession = 4;
+        public static int MaxUsersPerSession = 20;
 
         /// <summary>Ёмкость операционных компонентов (задел): списки пушек создаются на 32 слота.</summary>
         public const int MaxOperationalComponents = 32;
@@ -49,7 +49,7 @@ namespace AECC.LoadKit
         public static double ShotsPerSecond = 6.0;
 
         /// <summary>Максимум сессий на сервер (все генерируются на старте сервера).</summary>
-        public static int MaxSessionsOnServer = 6;
+        public static int MaxSessionsOnServer = 100;
 
         /// <summary>Килл-каунт сессии: случайный, но НЕ МЕНЕЕ 100.</summary>
         public static int SessionKillTargetMin = 100;
@@ -92,7 +92,11 @@ namespace AECC.LoadKit
         public static bool VerifyMode = true;
 
         /// <summary>Сколько клиентов мультиклиент-хост может обеспечивать единовременно.</summary>
-        public static int MulticlientCapacity = 24;
+        public static int MulticlientCapacity = 1000;
+
+        /// <summary>Число тик-потоков мультиклиента (виртуальные клиенты шардируются по ним):
+        /// один поток не успевает прокачать сотни клиентов за ClientTickMs.</summary>
+        public static int MulticlientTickThreads = 8;
 
         // ── Тайминги ──
         public static int RollIntervalMs = 60;        // авторитарный роллинг сервера

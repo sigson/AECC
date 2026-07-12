@@ -46,11 +46,54 @@ namespace AECC.LoadKit
 
         [IgnoreMember] public static Action<LoadRollEvent> PreApply = null;
 
+        // ── Дедуп применения в ОБЩИЙ мир мультиклиента ──
+        // Один и тот же срез приезжает на хост многократно (карточка сессии — по разу
+        // на каждого из N клиентов, срез соседа — по разу на каждого участника сессии).
+        // Идентичные байты идемпотентны — применяем один раз за короткое окно.
+        // Окно малое (5 роллинг-тиков): цикл значений A→B→A с байтами как у A
+        // не должен подавляться дольше окна.
+        [IgnoreMember] private const long DedupWindowMs = 300;
+        [IgnoreMember] private static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, long> _appliedBlobs =
+            new System.Collections.Concurrent.ConcurrentDictionary<ulong, long>();
+        [IgnoreMember] private static long _lastPruneMs;
+
+        private static ulong Fnv1a(byte[] data)
+        {
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < data.Length; i++)
+                hash = (hash ^ data[i]) * 1099511628211UL;
+            return hash;
+        }
+
         public override void Execute()
         {
             var hook = PreApply;
             if (hook != null) hook(this);
-            base.Execute();
+
+            long now = LK.NowMs;
+            var deduped = new List<byte[]>(Entities.Count);
+            foreach (var blob in Entities)
+            {
+                var h = Fnv1a(blob);
+                if (_appliedBlobs.TryGetValue(h, out var seenAt) && now - seenAt < DedupWindowMs)
+                    continue;
+                _appliedBlobs[h] = now;
+                deduped.Add(blob);
+            }
+
+            if (now - System.Threading.Interlocked.Read(ref _lastPruneMs) > 2000)
+            {
+                System.Threading.Interlocked.Exchange(ref _lastPruneMs, now);
+                foreach (var kv in _appliedBlobs)
+                    if (now - kv.Value > DedupWindowMs)
+                        _appliedBlobs.TryRemove(kv.Key, out _);
+            }
+
+            if (deduped.Count == 0) return;
+            var originalList = Entities;
+            Entities = deduped;
+            try { base.Execute(); }
+            finally { Entities = originalList; }
         }
     }
 
