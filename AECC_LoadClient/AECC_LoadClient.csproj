@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>AECC.LoadClient</RootNamespace>
+    <AssemblyName>AECC_LoadClient</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!-- Тот же набор общих исходников, что у AECC_LoadServer (кроме SQLite-провайдера,
+       который не IDObject и на CRC-идентичность типов не влияет). -->
+  <ItemGroup>
+    <Compile Include="..\AECC_LoadShared\**\*.cs" LinkBase="Shared" />
+    <Compile Include="..\AECC_TestShared\TestKit.cs" LinkBase="Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AECC_Core\AECC_Core.csproj" />
+    <ProjectReference Include="..\AECC_CoreFramework\AECC_CoreFramework.csproj" />
+    <ProjectReference Include="..\AECC_Framework\AECC_Framework.csproj" />
+    <ProjectReference Include="..\AECC_Packages\AECC_Packages.csproj" />
+  </ItemGroup>
+
+</Project>
