@@ -23,6 +23,12 @@ namespace AECC.Harness.Services
     {
         public Func<UserDataRowBase, ECSEntity> AuthorizationRealization = null;
         public Func<ClientRegistrationEvent, UserDataRowBase> SetupAuthorizationRealization = null;
+        /// <summary>
+        /// Серверный хук после успешной авторизации: сущность уже в мире,
+        /// SocketToEntity/EntityToSocket заполнены, UserLoggedEvent отправлен клиенту.
+        /// Аргументы: (сущность игрока, relogin).
+        /// </summary>
+        public Action<ECSEntity, bool> PostAuthorizationHook = null;
         private static AuthService cacheInstance;
         #region client
         public string LastSendedUsername;
@@ -94,7 +100,7 @@ namespace AECC.Harness.Services
 
         private void AuthorizationProcess(UserDataRowBase userData, ISocketAdapter socketAdapter)
         {
-            var entity = SocketToEntity.Values.Where(x => x.GetComponent<UsernameComponent>().Username == userData.Username).FirstOrDefault();
+            var entity = SocketToEntity.Values.Where(x => x.TryGetComponent<UsernameComponent>()?.Username == userData.Username).FirstOrDefault();
             var userLogged = new UserLoggedEvent();
             if(entity == null)
             {
@@ -127,6 +133,14 @@ namespace AECC.Harness.Services
             userLogged.userEntityId = entity.instanceId;
             userLogged.Destination = socketAdapter.CachedDestination;
             NetworkService.instance.EventManager.Dispatch(userLogged);
+            try
+            {
+                PostAuthorizationHook?.Invoke(entity, userLogged.userRelogin);
+            }
+            catch (Exception ex)
+            {
+                NLogger.LogError("PostAuthorizationHook: " + ex);
+            }
         }
 
         public override void InitializeProcess()

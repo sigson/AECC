@@ -86,22 +86,21 @@ namespace AECC.Harness.Model
 #endif
         }
 
+        // Пере/упаковка GameDataPacked — на Newtonsoft: старый вариант был обёрнут в
+        // `#if NET && !GODOT` и на netstandard2.0 молча возвращал default(T)
+        // (тот же класс дефекта, что и §10.3 FRAMEWORK_MAP).
         public virtual void PackJsonGameData<T>(T gameDataObject) where T : class
         {
-            #if NET && !GODOT
-            GameDataPacked = System.Text.Json.JsonSerializer.Serialize<T>(gameDataObject);
-            #endif
+            GameDataPacked = JsonConvert.SerializeObject(gameDataObject);
         }
 
         public virtual T UnpackJsonGameData<T>() where T : class
         {
-#if NET && !GODOT
+            if (string.IsNullOrEmpty(GameDataPacked))
+                return default(T);
             System.IO.MemoryStream mStream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(GameDataPacked));
             var reader = new JsonTextReader(new StreamReader(mStream));
             return JObject.Load(reader).ToObject<T>();
-#else
-            return default(T);
-#endif
         }
 
         public virtual T SetupNew<T>() where T : UserDataRowBase

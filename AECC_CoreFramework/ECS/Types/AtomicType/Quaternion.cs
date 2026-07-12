@@ -1,22 +1,24 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Core;
+using MessagePack;
 
 namespace AECC.ECS.Types.AtomicType
 {
     [System.Serializable]
+    [MessagePackObject]
     [TypeUid(101)]
     public class QuaternionS : BaseCustomType
     {
-        static new public long Id { get; set; } = 101;
-        public float x = 0f;
-        public float y = 0f;
-        public float z = 0f;
-        public float w = 0f;
+        [IgnoreMember] static new public long Id { get; set; } = 101;
+        [Key(0)] public float x = 0f;
+        [Key(1)] public float y = 0f;
+        [Key(2)] public float z = 0f;
+        [Key(3)] public float w = 0f;
 
         public QuaternionS() { }
         public QuaternionS(float x, float y, float z, float w)

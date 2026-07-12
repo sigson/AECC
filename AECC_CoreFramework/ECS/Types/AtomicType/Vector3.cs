@@ -1,21 +1,23 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Core;
+using MessagePack;
 
 namespace AECC.ECS.Types.AtomicType
 {
     [System.Serializable]
+    [MessagePackObject]
     [TypeUid(102)]
     public class Vector3S : BaseCustomType
     {
-        static new public long Id { get; set; } = 102;
-        public float x = 0f;
-        public float y = 0f;
-        public float z = 0f;
+        [IgnoreMember] static new public long Id { get; set; } = 102;
+        [Key(0)] public float x = 0f;
+        [Key(1)] public float y = 0f;
+        [Key(2)] public float z = 0f;
         public Vector3S() { }
 
         public Vector3S(float x, float y, float z)

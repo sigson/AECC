@@ -1,20 +1,22 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using AECC.Core;
+using MessagePack;
 
 namespace AECC.ECS.Types.AtomicType
 {
     [System.Serializable]
+    [MessagePackObject]
     [TypeUid(100)]
     public class Vector2S : BaseCustomType
     {
-        static new public long Id { get; set; } = 100;
-        public float x;
-        public float y;
+        [IgnoreMember] static new public long Id { get; set; } = 100;
+        [Key(0)] public float x;
+        [Key(1)] public float y;
 
         public Vector2S() { }
 
