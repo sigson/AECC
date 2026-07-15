@@ -120,5 +120,16 @@ namespace AECC.Core.BuiltInTypes.Components
         {
             timeRemaining = TimeRemaining;
         }
+
+        /// <summary>
+        /// Снятый компонент обязан остановить свой таймер: цикличные таймеры
+        /// (AutoReset) иначе продолжают стрелять onEnd по удалённой сущности —
+        /// источник NPE-шторма дроп-регионов после удаления битвы.
+        /// </summary>
+        protected override void OnRemoved(ECSEntity entity)
+        {
+            base.OnRemoved(entity);
+            try { TimerStop(); } catch { }
+        }
     }
 }

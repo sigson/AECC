@@ -1,4 +1,4 @@
-﻿using AECC.Core.Logging;
+using AECC.Core.Logging;
 using AECC.Extensions;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
@@ -396,7 +396,10 @@ namespace AECC.Harness.Services
         public List<string> GetRecursFiles(string start_path)
         {
             List<string> ls = new List<string>();
-            start_path = start_path.Replace(GlobalProgramState.instance.PathAltSeparator, GlobalProgramState.instance.PathSeparator);
+            // Это СИСТЕМНЫЙ путь ФС — нормализуем к системному разделителю; логический
+            // (PathSeparator, стиль ключей ConstantDB) сюда применять нельзя: при
+            // PathSeparator="\\" на Linux путь превращался в \home\... и IO падал.
+            start_path = start_path.Replace("\\", GlobalProgramState.instance.PathSystemSeparator).Replace("/", GlobalProgramState.instance.PathSystemSeparator);
             try
             {
                 string[] folders = DirectoryAdapter.GetDirectories(start_path);
@@ -583,11 +586,14 @@ namespace AECC.Harness.Services
         {
             get
             {
-                var splitedPath = this.Path.Split(GlobalProgramState.instance.PathSystemSeparator[0]);
+                // Path — ЛОГИЧЕСКИЙ конфиг-путь (стиль ключей ConstantDB), делить его
+                // нужно логическим PathSeparator, а не системным (иначе при "\\"-ключах
+                // на Linux сплит не срабатывал и Substring падал).
+                var splitedPath = this.Path.Split(GlobalProgramState.instance.PathSeparator[0]);
                 var newPath = "";
                 for (int i = 0; i < splitedPath.Length - 1; i++)
                 {
-                    newPath += splitedPath[i] + GlobalProgramState.instance.PathSystemSeparator;
+                    newPath += splitedPath[i] + GlobalProgramState.instance.PathSeparator;
                 }
                 newPath = newPath.Substring(0, newPath.Length - 1);
                 var newNameLib = splitedPath.ElementAt(splitedPath.Length - 2);
