@@ -351,7 +351,7 @@ namespace AECC.Extensions
                                 TimerDateTime.DateTimeNowTicks += (long)(externalStopwatch.ElapsedTicks * 1.3d);
                             }
 #else
-                            TimerDateTime.DateTimeNowTicks += (internalStopwatch.ElapsedTicks);
+                            TimerDateTime.DateTimeNowTicks += (internalStopwatch.Elapsed.Ticks);
 #endif
                         internalStopwatch.Reset();
                         externalTimeCache = TimerDateTime.DateTimeNowTicks;
@@ -382,9 +382,9 @@ namespace AECC.Extensions
                         // {
                         //     TimerDateTime.DateTimeNowTicks += (long)(externalStopwatch.ElapsedTicks * 1.3d);
                         // }
-                        TimerDateTime.DateTimeNowTicks += (externalStopwatch.ElapsedTicks);
+                        TimerDateTime.DateTimeNowTicks += (externalStopwatch.Elapsed.Ticks);
 #else
-                        TimerDateTime.DateTimeNowTicks += (externalStopwatch.ElapsedTicks);
+                        TimerDateTime.DateTimeNowTicks += (externalStopwatch.Elapsed.Ticks);
 #endif
                     }
                     else
