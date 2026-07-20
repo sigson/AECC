@@ -22,11 +22,28 @@ namespace AECC.Serialization
     /// </summary>
     public class EntityNetSerializer : EntitySerializer
     {
+        /// <summary>
+        /// Blob сущности: NetSerializer энумерирует её сериализуемые коллекции
+        /// (fastEntityComponentsId — обычный Dictionary), а ВСЕ мутаторы словаря
+        /// (AddI/RemoveI/ClearI при добавлении/снятии компонентов из контрактов и
+        /// таймер-потоков) идут под entity.SerialLocker БЕЗ StabilizationGate —
+        /// без того же лока энумерация рвётся («Collection was modified» в тике
+        /// роллинга). Порядок локов: gate(read) → SerialLocker; мутаторы берут
+        /// SerialLocker коротко и гейт внутри не берут — дедлока нет.
+        /// </summary>
+        private byte[] SerializeEntityBlobLocked(ECSEntity entity)
+        {
+            lock (entity.SerialLocker)
+            {
+                return serializationAdapter.SerializeECSEntity(entity);
+            }
+        }
+
         protected override byte[] FullSerialize(ECSEntity entity, bool serializeOnlyChanged = false)
         {
             var resultObject = new SerializedEntity();
             entity.EnterToSerialization();
-            resultObject.Entity = serializationAdapter.SerializeECSEntity(entity);
+            resultObject.Entity = SerializeEntityBlobLocked(entity);
             resultObject.Components = entity.entityComponents.SerializeStorage(serializationAdapter, serializeOnlyChanged, true);
 
             return serializationAdapter.SerializeAdapterEntity(resultObject);
@@ -39,7 +56,7 @@ namespace AECC.Serialization
             using (entity.entityComponents.StabilizationGate.ReadLock())
             {
                 entity.EnterToSerialization();
-                resultObject.Entity = serializationAdapter.SerializeECSEntity(entity);
+                resultObject.Entity = SerializeEntityBlobLocked(entity);
                 resultObject.Components = entity.entityComponents.SlicedSerializeStorage(serializationAdapter, serializeOnlyChanged, clearChanged);
 
                 resultObject.Components[ECSEntity.Id] = resultObject.Entity;

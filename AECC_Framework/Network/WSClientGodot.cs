@@ -163,6 +163,14 @@ namespace AECC.Network
 
             _client = new Godot.WebSocketClient();
 
+            // Дефолтные буферы Godot WS — 64 КБ на входящий пакет: полный снапшот /
+            // конфиго-дампы сервера крупнее и валят packet_buffer write_packet с
+            // ERR_OUT_OF_MEMORY (первый же боевой симптом веб-экспорта). Одно
+            // AECC-событие = одно WS-сообщение, поэтому буфер должен вмещать
+            // МАКСИМАЛЬНОЕ событие целиком.
+            var ioBufferKb = Math.Max(16384, bufferSize / 1024);
+            _client.SetBuffers(ioBufferKb, 4096, ioBufferKb, 4096);
+
             // Connect Godot signals
             _client.Connect("connection_closed", this, nameof(OnConnectionClosed));
             _client.Connect("connection_error", this, nameof(OnConnectionError));

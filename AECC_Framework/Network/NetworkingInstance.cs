@@ -272,14 +272,31 @@ namespace AECC.Network
                 return;
             }
 
-            // ── Godot protocols cannot be auto-created here ──
+            // ── Godot protocols: poll-based node adapter (single-threaded) ──
+            // Under GODOT the instance creates the WSClientGodot node itself and parents
+            // it to the scene root, so OneThreadMode boots need no manual registration.
+            // Must be called from the Godot main thread (AddChild + ConnectToUrl).
             if (ProtocolTraits.IsGodotProtocol(config.Protocol))
             {
+#if GODOT && !GODOT4_0_OR_GREATER
+                var godotWs = new WSClientGodot { Name = $"WSClientGodot_{config.Host}_{config.Port}" };
+                lock (GodotRootStorage.TreeLocker)
+                {
+                    GodotRootStorage.globalRoot.AddChild(godotWs);
+                }
+                godotWs.InitializeClient(config.Host, config.Port, config.BufferSize, config.Protocol);
+                WireClientEvents(godotWs, config, key);
+                godotWs.Connect();
+
+                NLogger.LogNetwork($"Client connecting (Godot WS node): {config.Protocol} to {config.Host}:{config.Port}");
+                return;
+#else
                 NLogger.LogError(
                     $"Cannot auto-create {config.Protocol} client from StartClient(). " +
                     "Godot WebSocket clients are Godot Nodes — create the WSClientGodot in the scene tree, " +
                     "call InitializeClient(), then register via RegisterExternalClient().");
                 return;
+#endif
             }
 
             ISocketAdapter client;
@@ -389,7 +406,9 @@ namespace AECC.Network
                 return;
             }
 
-            // Godot protocols can't be auto-created
+#if !GODOT || GODOT4_0_OR_GREATER
+            // Godot protocols can't be auto-created outside a Godot 3 build
+            // (under GODOT StartClient creates the WSClientGodot node itself)
             if (ProtocolTraits.IsGodotProtocol(dest.Protocol))
             {
                 NLogger.LogError(
@@ -397,6 +416,7 @@ namespace AECC.Network
                     "Register Godot WebSocket clients manually via RegisterExternalClient().");
                 return;
             }
+#endif
 
             var key = dest.RouteKey;
 
