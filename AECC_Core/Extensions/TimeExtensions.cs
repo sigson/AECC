@@ -341,7 +341,7 @@ namespace AECC.Extensions
                     {
                         internalStopwatch.Stop();
                         if (internalStopwatch.ElapsedMilliseconds < 100)//NOT DEBUGGED
-#if NET || NETSTANDARD2_0_OR_GREATER || UNITY || GODOT_4_0_OR_GREATER
+#if NET || UNITY || GODOT_4_0_OR_GREATER
                             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
                             {
                                 TimerDateTime.DateTimeNowTicks += (externalStopwatch.ElapsedTicks / 63);//100
@@ -364,7 +364,7 @@ namespace AECC.Extensions
                     if (externalStopwatch.ElapsedMilliseconds < baseTick + 100)//NOT DEBUGGED
                     {
 
-#if NET || NETSTANDARD2_0_OR_GREATER || UNITY || GODOT_4_0_OR_GREATER
+#if NET || UNITY || GODOT_4_0_OR_GREATER
                         if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
                         {
                             TimerDateTime.DateTimeNowTicks += (externalStopwatch.ElapsedTicks / 63);//100
@@ -373,7 +373,7 @@ namespace AECC.Extensions
                         {
                             TimerDateTime.DateTimeNowTicks += (long)(externalStopwatch.ElapsedTicks * 1.3d);
                         }
-#elif GODOT
+#elif GODOT && !GODOT4_0_OR_GREATER
                         // if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux) || System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX) || Godot.OS.GetName() == "Android" || Godot.OS.GetName() == "iOS" || Godot.OS.GetName() == "macOS" || Godot.OS.GetName() == "HTML5") 
                         // {
                         //     TimerDateTime.DateTimeNowTicks += (externalStopwatch.ElapsedTicks / 63);//100
